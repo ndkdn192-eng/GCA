@@ -2,7 +2,7 @@
   "name": "fantos-esports-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Bot Discord FANTOS E-SPORTS",
+  "description": "Bot Discord GCA BOTS",
   "main": "FANTOS_ESPORTES_visual_filas_atualizado.js",
   "type": "commonjs",
   "scripts": {
