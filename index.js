@@ -898,8 +898,8 @@ function queueDescription(queue) {
       }).join("\n");
 
   return [
-    "**Valor da aposta** <:valorfila:1560359416744648815> " + money(queue.value),
-    "**Jogadores** <:quantidade:1560359696173371432>",
+    "**Valor da aposta:** " + money(queue.value),
+    "**Jogadores:**",
     players
   ].join("\n");
 }
@@ -915,7 +915,7 @@ function queueEmbed(queue) {
 function queueLeaveButton(customId) {
   return new ButtonBuilder()
     .setCustomId(customId)
-    .setLabel("✕")
+    .setLabel("Sair da fila")
     .setStyle(ButtonStyle.Danger);
 }
 
@@ -979,7 +979,7 @@ function queueComponents(queue) {
   if (["2x2", "3x3"].includes(queue.format) && queue.modality !== "misto") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("Entrar na fila").setStyle(ButtonStyle.Success),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1016,7 +1016,7 @@ function queueComponents(queue) {
   if (["2x2", "3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("Entrar na fila").setStyle(ButtonStyle.Success),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -2243,8 +2243,8 @@ function isQueuePublicationMessage(message, botUserId) {
 
   const title = String(message.embeds?.[0]?.title || "").trim();
   const description = String(message.embeds?.[0]?.description || "");
-  const hasQueueFields = /valorfila|Valor da aposta/i.test(description)
-    && /quantidade|Jogadores/i.test(description);
+  const hasQueueFields = /Valor da aposta/i.test(description)
+    && /Jogadores/i.test(description);
   return /^(?:🎮\s*)?\d+[vx]\d+\s+(?:Mobile|Mobilador|Emulador|Misto)(?:\s*\|\s*R\$\s*[\d,.]+)?$/i.test(title)
     || /^(?:🎮\s*)?FILA\s+\d+[vx]\d+$/i.test(title)
     || /^🎥\s*FILA DO\b/i.test(title)
