@@ -2,12 +2,15 @@
   "name": "fantos-esports-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Bot Discord GCA BOTS",
+  "description": "Bot Discord FANTOS E-SPORTS",
   "main": "FANTOS_ESPORTES_visual_filas_atualizado.js",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node FANTOS_ESPORTES_visual_filas_atualizado.js",
     "check": "node --check FANTOS_ESPORTES_visual_filas_atualizado.js"
+    "start": "node index.js",
+    "check": "node --check index.js"
   },
   "engines": {
     "node": ">=18.17.0"
@@ -15,4 +18,5 @@
   "dependencies": {
     "discord.js": "^14.0.0"
   }
+}
 }
