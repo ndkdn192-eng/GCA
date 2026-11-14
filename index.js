@@ -750,7 +750,7 @@ async function publishQueueDestinations(guild, destinations) {
         let message = publication?.messageId
           ? await channel.messages.fetch(publication.messageId).catch(() => null)
           : null;
-        const payload = { embeds: [queueEmbed(queue)], components: queueComponents(queue) };
+        const payload = queueCardPayload(queue);
 
         if (message) {
           await message.edit(payload);
@@ -898,9 +898,8 @@ function queueDescription(queue) {
       }).join("\n");
 
   return [
-    "**Valor da aposta:** " + money(queue.value),
-    "",
-    "**Jogadores**",
+    "**Valor da aposta** <:valorfila:1560359416744648815> " + money(queue.value),
+    "**Jogadores** <:quantidade:1560359696173371432>",
     players
   ].join("\n");
 }
@@ -909,16 +908,79 @@ function queueEmbed(queue) {
   return new EmbedBuilder()
     .setColor(db.config.embedColor || "#5865F2")
     .setTitle(queueTitle(queue))
-    .setDescription(queueDescription(queue) + "\n\n\u200b")
+    .setDescription(queueDescription(queue))
     .setFooter({ text: "Sistema de Apostas" });
+}
+
+function queueLeaveButton(customId) {
+  return new ButtonBuilder()
+    .setCustomId(customId)
+    .setLabel("✕")
+    .setStyle(ButtonStyle.Danger);
+}
+
+function asComponentsV2Card(payload, force = false) {
+  const components = (payload.components || []).map(component =>
+    typeof component?.toJSON === "function" ? component.toJSON() : component
+  );
+  const hasSelect = components.some(row =>
+    (row?.components || []).some(component => [3, 5, 6, 7, 8].includes(component?.type))
+  );
+  if (!force && !hasSelect) return payload;
+
+  const embeds = (payload.embeds || []).map(embed =>
+    typeof embed?.toJSON === "function" ? embed.toJSON() : embed
+  );
+  const children = [];
+  for (const embed of embeds) {
+    const parts = [];
+    if (embed.title) parts.push(`# ${embed.title}`);
+    if (embed.description) parts.push(embed.description);
+    for (const field of embed.fields || []) {
+      parts.push(`**${field.name}**\n${field.value}`);
+    }
+    if (embed.footer?.text) parts.push(`-# ${embed.footer.text}`);
+    const text = parts.join("\n\n");
+    if (text) {
+      for (let offset = 0; offset < text.length; offset += 3900) {
+        children.push({ type: 10, content: text.slice(offset, offset + 3900) });
+      }
+    }
+    if (embed.image?.url) {
+      children.push({ type: 12, items: [{ media: { url: embed.image.url } }] });
+    }
+  }
+  if (payload.content) {
+    children.unshift({ type: 10, content: String(payload.content).slice(0, 3900) });
+  }
+  if (components.length) {
+    if (children.length) children.push({ type: 14, divider: true, spacing: 1 });
+    children.push(...components);
+  }
+
+  const color = embeds.find(embed => Number.isInteger(embed.color))?.color;
+  const container = { type: 17, components: children };
+  if (Number.isInteger(color)) container.accent_color = color;
+  container.toJSON = () => ({
+    type: container.type,
+    ...(Number.isInteger(container.accent_color) ? { accent_color: container.accent_color } : {}),
+    components: container.components
+  });
+  const { content, embeds: _embeds, components: _components, flags: originalFlags, ...rest } = payload;
+  const flags = (Number(originalFlags) || 0) | 32768;
+  return { ...rest, flags, components: [container] };
+}
+
+function queueCardPayload(queue) {
+  return asComponentsV2Card({ embeds: [queueEmbed(queue)], components: queueComponents(queue) }, true);
 }
 
 function queueComponents(queue) {
   if (["2x2", "3x3"].includes(queue.format) && queue.modality !== "misto") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("Entrar na fila").setEmoji("✅").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`queue_leave|${queue.id}`).setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓").setStyle(ButtonStyle.Success),
+        queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
   }
@@ -927,7 +989,7 @@ function queueComponents(queue) {
       new ActionRowBuilder().addComponents(
         addCustomEmoji(new ButtonBuilder().setCustomId(`queue_join|${queue.id}|gelo_normal`).setLabel("Gelo Normal").setStyle(ButtonStyle.Secondary), "blackgelo", QUEUE_EMOJI_IDS.geloNormal),
         addCustomEmoji(new ButtonBuilder().setCustomId(`queue_join|${queue.id}|gelo_infinito`).setLabel("Gelo Infinito").setStyle(ButtonStyle.Primary), "blackgelo", QUEUE_EMOJI_IDS.geloInfinito),
-        new ButtonBuilder().setCustomId(`queue_leave|${queue.id}`).setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger)
+        queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
   }
@@ -935,8 +997,8 @@ function queueComponents(queue) {
   if (queue.modality === "misto" && queue.format === "2x2") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("1Emu").setEmoji("✅").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`queue_leave|${queue.id}`).setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("①").setStyle(ButtonStyle.Success),
+        queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
   }
@@ -944,9 +1006,9 @@ function queueComponents(queue) {
   if (queue.modality === "misto" && ["3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("1Emu").setEmoji("✅").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|2emu`).setLabel("2Emu").setEmoji("✅").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`queue_leave|${queue.id}`).setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("①").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|2emu`).setLabel("②").setStyle(ButtonStyle.Success),
+        queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
   }
@@ -954,8 +1016,8 @@ function queueComponents(queue) {
   if (["2x2", "3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("Entrar na fila").setEmoji("✅").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`queue_leave|${queue.id}`).setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓").setStyle(ButtonStyle.Success),
+        queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
   }
@@ -1005,7 +1067,7 @@ function safeMediatorQueueComponents() {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("mediator_join").setLabel("Entrar na fila").setEmoji("✅").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("mediator_leave").setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger)
+      queueLeaveButton("mediator_leave")
     )
   ];
 }
@@ -1376,7 +1438,7 @@ function streamerQueueComponents(queue) {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`streamer_join|${queue.id}`).setLabel("Entrar na fila").setEmoji("✅").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`streamer_leave|${queue.id}`).setLabel("Sair da fila").setEmoji("❎").setStyle(ButtonStyle.Danger),
+      queueLeaveButton(`streamer_leave|${queue.id}`),
       addCustomEmoji(new ButtonBuilder().setCustomId(`streamer_deactivate|${queue.id}`).setLabel("Desativar fila").setStyle(ButtonStyle.Secondary), "portafechada", QUEUE_EMOJI_IDS.sair)
     )
   ];
@@ -1390,7 +1452,10 @@ async function refreshStreamerQueueMessage(queue, guild) {
     embeds: [streamerQueueEmbed(queue, guild)],
     components: streamerQueueComponents(queue)
   };
-  const signature = queueRenderSignature(queue);
+  const signature = JSON.stringify({
+    embeds: [streamerQueueEmbed(queue, guild).toJSON()],
+    components: streamerQueueComponents(queue).map(row => row.toJSON())
+  });
   const cacheKey = `${guild.id}:${queue.messageId}`;
   if (streamerQueueRenderCache.get(cacheKey) === signature) return;
 
@@ -1938,7 +2003,7 @@ async function createTicketChannel(interaction, ticketType = "support") {
   saveDatabase();
   sendBotLog(guild.id, "ticket", "Ticket aberto", `**Tipo:** ${type.label}\n**Pessoa:** <@${interaction.user.id}>\n**Canal:** <#${thread.id}>`);
 
-  const welcomeMessage = await thread.send({
+  const welcomeMessage = await thread.send(asComponentsV2Card({
     content: [
       `<@${interaction.user.id}>`,
       responsibleRoleMentions.join(" ")
@@ -1952,7 +2017,7 @@ async function createTicketChannel(interaction, ticketType = "support") {
       "Se precisar acrescentar alguma informação, pode enviar nesta conversa."
     ].join("\n"))],
     components: ticketPanelComponents(ticket.id)
-  });
+  }));
   ticket.panelMessageId = welcomeMessage.id;
   saveDatabase();
 
@@ -2691,7 +2756,7 @@ client.on("messageCreate", async message => {
         }
       }
 
-      await message.channel.send({
+      await message.channel.send(asComponentsV2Card({
         embeds: [makeEmbed("🛠️ PAINEL DO RESPONSÁVEL", [
           `**Ticket:** <#${ticket.channelId}>`,
           `👤 **Responsável:** <@${message.author.id}>`,
@@ -2700,7 +2765,7 @@ client.on("messageCreate", async message => {
           "🔒 Somente cargos responsáveis podem executar as ações."
         ].join("\n"))],
         components: ticketPanelComponents(ticket.id, ticket.claimedBy)
-      }).catch(error => console.error("❌ Erro ao publicar painel .aux no ticket:", error));
+      })).catch(error => console.error("❌ Erro ao publicar painel .aux no ticket:", error));
       return;
     }
 
@@ -2733,7 +2798,7 @@ client.on("messageCreate", async message => {
         return message.reply("🔒 O painel do Mediador será liberado somente após os 2 jogadores confirmarem.");
       }
 
-      return message.reply({
+      return message.reply(asComponentsV2Card({
         embeds: [
           makeEmbed(
             "👨‍⚖️ PAINEL DO MEDIADOR",
@@ -2750,7 +2815,7 @@ client.on("messageCreate", async message => {
           )
         ],
         components: mediatorPanelComponents(bet.id)
-      });
+      }));
     }
     if (command === ".p") {
       const stats = userStats(message.author.id);
@@ -2882,6 +2947,16 @@ async function grantChannelAccess(channel, userId, permissions = {}) {
 ======================================================== */
 
 client.on("interactionCreate", async interaction => {
+  for (const method of ["reply", "update", "editReply", "followUp"]) {
+    const original = interaction[method];
+    if (typeof original !== "function" || original.__componentsV2Wrapped) continue;
+    const wrapped = function (options, ...args) {
+      const converted = options && typeof options === "object" ? asComponentsV2Card(options) : options;
+      return original.call(interaction, converted, ...args);
+    };
+    wrapped.__componentsV2Wrapped = true;
+    interaction[method] = wrapped;
+  }
   try {
     /* ----------------------------------------------------
        CHAT INPUT
@@ -3049,7 +3124,7 @@ client.on("interactionCreate", async interaction => {
             channel = null;
           }
 
-          const payload = { embeds: [queueEmbed(queue)], components: queueComponents(queue) };
+          const payload = queueCardPayload(queue);
           const signature = queueRenderSignature(queue);
           let edited = false;
           if (matches.length) {
@@ -5133,7 +5208,7 @@ client.on("interactionCreate", async interaction => {
             queue.threadId = thread.id;
             queue.channelId = thread.id;
             let msg = queue.messageId ? await thread.messages.fetch(queue.messageId).catch(() => null) : null;
-            const payload = { embeds: [queueEmbed(queue)], components: queueComponents(queue) };
+            const payload = queueCardPayload(queue);
             if (msg) await msg.edit(payload);
             else { msg = await thread.send(payload); queue.messageId = msg.id; }
             published.push(money(value));
@@ -5321,15 +5396,9 @@ client.on("interactionCreate", async interaction => {
               }
 
               if (sentMessage) {
-                await sentMessage.edit({
-                  embeds: [queueEmbed(queue)],
-                  components: queueComponents(queue)
-                });
+                await sentMessage.edit(queueCardPayload(queue));
               } else {
-                sentMessage = await channel.send({
-                  embeds: [queueEmbed(queue)],
-                  components: queueComponents(queue)
-                });
+                sentMessage = await channel.send(queueCardPayload(queue));
                 queue.messageId = sentMessage.id;
               }
 
@@ -5523,22 +5592,13 @@ async function withQueueRenderLock(queueId, task) {
 }
 
 function queueRenderSignature(queue) {
-  return JSON.stringify({
-    embeds: [queueEmbed(queue).toJSON()],
-    components: queueComponents(queue).map(row => row.toJSON())
-  });
+  return JSON.stringify(queueCardPayload(queue));
 }
 
 async function refreshQueueMessage(queue, guild) {
   return withQueueRenderLock(queue.id, async () => {
-  const payload = {
-    embeds: [queueEmbed(queue)],
-    components: queueComponents(queue)
-  };
-  const signature = JSON.stringify({
-    embeds: payload.embeds.map(embed => embed.toJSON()),
-    components: payload.components.map(row => row.toJSON())
-  });
+  const payload = queueCardPayload(queue);
+  const signature = JSON.stringify(payload);
   const publications = Array.isArray(queue.publications) && queue.publications.length
     ? queue.publications
     : (queue.channelId && queue.messageId ? [{ channelId: queue.channelId, messageId: queue.messageId }] : []);
