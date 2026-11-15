@@ -722,15 +722,22 @@ async function withQueueMutationLock(queueId, task) {
 }
 
 function getQueue(format, modality, value, mode) {
-  const id = queueId(format, modality, value, mode);
+  const normalizedValue = Math.round(Number(value) * 100) / 100;
+  const id = queueId(format, modality, normalizedValue, mode);
   if (!db.queues[id]) {
-    db.queues[id] = {
-      id, format, modality, value: Number(value), mode,
-      players: [], playerModes: {}, messageId: null, channelId: null, parentChannelId: null, threadId: null
-    };
+    db.queues[id] = { id, format, modality, value: normalizedValue, mode,
+      players: [], playerModes: {}, messageId: null, channelId: null, parentChannelId: null, threadId: null };
   }
-  if (!db.queues[id].playerModes) db.queues[id].playerModes = {};
-  return db.queues[id];
+  const queue = db.queues[id];
+  // Reconcile legacy records with the amount encoded in the canonical queue key.
+  // This fixes old 1x1 posts whose stored display value drifted from their actual tier.
+  queue.id = id;
+  queue.format = format;
+  queue.modality = modality;
+  queue.value = normalizedValue;
+  queue.mode = mode;
+  if (!queue.playerModes) queue.playerModes = {};
+  return queue;
 }
 
 async function publishQueueDestinations(guild, destinations) {
@@ -3137,6 +3144,17 @@ client.on("interactionCreate", async interaction => {
         for (const [storedId, storedQueue] of Object.entries(db.queues || {})) {
           if (!storedQueue || (storedQueue.guildId && storedQueue.guildId !== interaction.guildId)) continue;
           storedQueue.id = storedQueue.id || storedId;
+          const keyParts = String(storedId).split(":");
+          if (keyParts.length >= 4 && keyParts[0] === "1x1" && MODALITIES.includes(keyParts[1])) {
+            const canonicalValue = Number(keyParts[2]);
+            if (Number.isFinite(canonicalValue)) {
+              storedQueue.id = storedId;
+              storedQueue.format = "1x1";
+              storedQueue.modality = keyParts[1];
+              storedQueue.value = Math.round(canonicalValue * 100) / 100;
+              storedQueue.mode = keyParts.slice(3).join(":") || "choice";
+            }
+          }
           queuesById.set(storedQueue.id, storedQueue);
           if (storedQueue.messageId) queuesByMessageId.set(storedQueue.messageId, storedQueue);
         }
