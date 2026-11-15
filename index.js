@@ -407,8 +407,21 @@ function userStats(userId) {
   return db.users[userId];
 }
 
+function consecutiveWins(userId) {
+  const history = db.playerMatchLogs?.[userId];
+  const entries = Object.values(Array.isArray(history) ? history : history || {})
+    .filter(entry => entry?.outcome === "win" || entry?.outcome === "loss")
+    .sort((a, b) => (b.finishedAt || b.updatedAt || 0) - (a.finishedAt || a.updatedAt || 0));
+  let streak = 0;
+  for (const entry of entries) {
+    if (entry.outcome !== "win") break;
+    streak++;
+  }
+  return streak;
+}
+
 function syncPlayerMatchHistory(bet, persist = true) {
-  if (!bet?.id || !Array.isArray(bet.players) || !bet.players.length) return;
+  if (!bet?.id || bet.status !== "finished" || !bet.winnerId || !Array.isArray(bet.players) || !bet.players.length) return;
   db.playerMatchLogs = db.playerMatchLogs || {};
   const outcomeFor = playerId => {
     if (bet.status === "cancelled") return "cancelled";
@@ -424,12 +437,13 @@ function syncPlayerMatchHistory(bet, persist = true) {
     }
     history ||= db.playerMatchLogs[playerId] = {};
     const key = `${bet.guildId}:${bet.id}`;
+    const finishedAt = bet.finishedAt || Date.now();
     const data = {
       betId: bet.id,
       guildId: bet.guildId,
       createdAt: bet.createdAt || Date.now(),
       updatedAt: Date.now(),
-      finishedAt: bet.status === "finished" || bet.status === "cancelled" || bet.winnerId ? (bet.finishedAt || Date.now()) : null,
+      finishedAt,
       format: bet.format || "—",
       modality: bet.modality || "—",
       value: Number(bet.value) || 0,
@@ -884,7 +898,7 @@ function queueTitle(queue) {
 
 function queueDescription(queue) {
   const players = queue.players.length === 0
-    ? "Nenhum jogador na fila."
+    ? "A fila está vazia no momento."
     : queue.players.map((id, index) => {
         const mode = queue.playerModes?.[id];
         const modeText = mode === "gelo_normal" ? " — Gelo Normal"
@@ -915,7 +929,7 @@ function queueEmbed(queue) {
 function queueLeaveButton(customId) {
   return new ButtonBuilder()
     .setCustomId(customId)
-    .setLabel("Sair da fila")
+    .setLabel("✕ Sair da fila")
     .setStyle(ButtonStyle.Danger);
 }
 
@@ -972,14 +986,17 @@ function asComponentsV2Card(payload, force = false) {
 }
 
 function queueCardPayload(queue) {
-  return asComponentsV2Card({ embeds: [queueEmbed(queue)], components: queueComponents(queue) }, true);
+  const payload = asComponentsV2Card({ embeds: [queueEmbed(queue)], components: queueComponents(queue) }, true);
+  // Mantém a cor das informações neutra; as cores verde/vermelha ficam nos botões.
+  if (payload.components?.[0]) delete payload.components[0].accent_color;
+  return payload;
 }
 
 function queueComponents(queue) {
   if (["2x2", "3x3"].includes(queue.format) && queue.modality !== "misto") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("Entrar na fila").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -997,7 +1014,7 @@ function queueComponents(queue) {
   if (queue.modality === "misto" && queue.format === "2x2") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("①").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("✓ Entrar na fila · 1Emu").setStyle(ButtonStyle.Success),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1006,8 +1023,8 @@ function queueComponents(queue) {
   if (queue.modality === "misto" && ["3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("①").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|2emu`).setLabel("②").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("✓ Entrar na fila · 1Emu").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|2emu`).setLabel("✓ Entrar na fila · 2Emu").setStyle(ButtonStyle.Success),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1016,7 +1033,7 @@ function queueComponents(queue) {
   if (["2x2", "3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("Entrar na fila").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1066,7 +1083,7 @@ function mediatorQueueComponents() {
 function safeMediatorQueueComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("mediator_join").setLabel("Entrar na fila").setEmoji("✅").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("mediator_join").setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
       queueLeaveButton("mediator_leave")
     )
   ];
@@ -1155,35 +1172,18 @@ async function renameBetThreadAfterConfirmation(guild, bet) {
 
 function betEmbed(bet) {
   const confirmed = new Set(bet.confirmedBy || []);
-  const confirmationLines = bet.players.map((id, index) =>
-    `> **${String(index + 1).padStart(2, "0")}.** <@${id}>　${confirmed.has(id) ? "✅ Confirmado" : "⏳ Aguardando"}`
-  ).join("\n");
-
   return makeEmbed("AGUARDANDO CONFIRMAÇÕES", [
-    "**🎮 Estilo de jogo**",
-    `> ${bet.format} ${modalityName(bet.modality)}${bet.mode ? ` · ${bet.mode.replaceAll("_", " ")}` : ""}`,
-    "",
-    "**ⓘ Valor da aposta**",
-    `> ${money(bet.value)} por jogador　·　Prêmio: ${money(Number(bet.value) * 2)}`,
-    "",
-    "**👥 Jogadores**",
-    `> ${bet.players.map(id => `<@${id}>`).join("　·　")}`,
-    "",
-    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "**CONFIRMAÇÕES**",
-    confirmationLines,
-    "",
-    bet.confirmedBy.length === bet.players.length
-      ? "✅ **Os dois jogadores confirmaram.**"
-      : `> **Progresso:** \`${bet.confirmedBy.length}/${bet.players.length}\` jogadores confirmaram.`
+    `**Modo:** ${bet.format} ${modalityName(bet.modality)}${bet.mode ? ` · ${bet.mode.replaceAll("_", " ")}` : ""}`,
+    `**Aposta:** ${money(bet.value)} por jogador　·　**Prêmio:** ${money(Number(bet.value) * 2)}`,
+    `**Jogadores (${bet.confirmedBy.length}/${bet.players.length}):** ${bet.players.map(id => `${confirmed.has(id) ? "✓" : "⏳"} <@${id}>`).join("　·　")}`
   ].join("\n"));
 }
 
 function betButtons(betId) {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`bet_confirm|${betId}`).setLabel("Confirmar").setEmoji("✅").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`bet_cancel|${betId}`).setLabel("Cancelar").setEmoji("❌").setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId(`bet_confirm|${betId}`).setLabel("✓ Confirmar").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`bet_cancel|${betId}`).setLabel("✕ Cancelar").setStyle(ButtonStyle.Danger)
     )
   ];
 }
@@ -1437,7 +1437,7 @@ function streamerQueueComponents(queue) {
 
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`streamer_join|${queue.id}`).setLabel("Entrar na fila").setEmoji("✅").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`streamer_join|${queue.id}`).setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
       queueLeaveButton(`streamer_leave|${queue.id}`),
       addCustomEmoji(new ButtonBuilder().setCustomId(`streamer_deactivate|${queue.id}`).setLabel("Desativar fila").setStyle(ButtonStyle.Secondary), "portafechada", QUEUE_EMOJI_IDS.sair)
     )
@@ -1817,28 +1817,59 @@ async function sendTicketTranscript(ticket, ticketChannel) {
     chunks.push(page + footer);
   }
 
-  const fileParts = chunks.map((content, index) => new AttachmentBuilder(
+  const guild = client.guilds.cache.get(ticket.guildId)
+    || await client.guilds.fetch(ticket.guildId).catch(() => null);
+  const logChannelId = db.config.logTicketChannelId;
+  const logChannel = guild && logChannelId
+    ? (guild.channels.cache.get(logChannelId) || await guild.channels.fetch(logChannelId).catch(() => null))
+    : null;
+  if (logChannelId && !logChannel?.isTextBased?.()) {
+    throw new Error("O canal de logs de tickets não está acessível. Confira a configuração e as permissões.");
+  }
+  const batchFiles = (contents, startIndex) => contents.map((content, offset) => new AttachmentBuilder(
     Buffer.from(content, "utf8"),
-    { name: `transcript-${ticket.id}${chunks.length > 1 ? `-${index + 1}` : ""}.html` }
+    { name: `transcript-${ticket.id}${chunks.length > 1 ? `-${startIndex + offset + 1}` : ""}.html` }
   ));
+  const ticketType = (TICKET_TYPES[ticket.type] || TICKET_TYPES.support).label;
+  const partInfo = (index, count) => count > 1
+    ? `\nParte${Math.min(3, count - index) > 1 ? "s" : ""} ${index + 1}–${Math.min(index + 3, count)} de ${count}`
+    : "";
+  const dmEmbed = (index, count) => new EmbedBuilder()
+    .setColor(db.config.embedColor || "#5865F2")
+    .setTitle("Transcript do seu atendimento")
+    .setDescription(`O atendimento **${ticketChannel.name}** foi encerrado. O histórico completo está no arquivo HTML anexado.${partInfo(index, count)}`)
+    .addFields(
+      { name: "Assunto", value: ticketType, inline: true },
+      { name: "Responsável", value: ticket.claimedBy ? `<@${ticket.claimedBy}>` : "Não assumido", inline: true },
+      { name: "Encerrado em", value: new Date(ticket.closedAt || Date.now()).toLocaleString("pt-BR"), inline: true }
+    )
+    .setFooter({ text: "Guarde este arquivo para consultar a conversa depois." })
+    .setTimestamp(ticket.closedAt || Date.now());
 
-  for (let index = 0; index < fileParts.length; index += 3) {
-    const batch = fileParts.slice(index, index + 3);
-    const firstPart = index + 1;
-    const lastPart = index + batch.length;
-    const partInfo = fileParts.length > 1 ? `\nParte${batch.length > 1 ? "s" : ""} ${firstPart}–${lastPart} de ${fileParts.length}` : "";
-    const transcriptEmbed = new EmbedBuilder()
-      .setColor(db.config.embedColor || "#5865F2")
-      .setTitle("Transcript do seu atendimento")
-      .setDescription(`O atendimento **${ticketChannel.name}** foi encerrado. O histórico completo está no arquivo HTML anexado; abra-o para visualizar a conversa em um layout inspirado no Discord.${partInfo}`)
-      .addFields(
-        { name: "Assunto", value: (TICKET_TYPES[ticket.type] || TICKET_TYPES.support).label, inline: true },
-        { name: "Responsável", value: ticket.claimedBy ? `<@${ticket.claimedBy}>` : "Não assumido", inline: true },
-        { name: "Encerrado em", value: new Date(ticket.closedAt || Date.now()).toLocaleString("pt-BR"), inline: true }
-      )
-      .setFooter({ text: "Guarde este arquivo para consultar a conversa depois." })
-      .setTimestamp(ticket.closedAt || Date.now());
-    await recipient.send({ embeds: [transcriptEmbed], files: batch });
+  if (!ticket.transcriptSentAt) {
+    for (let index = 0; index < chunks.length; index += 3) {
+      const batchContents = chunks.slice(index, index + 3);
+      await recipient.send({ embeds: [dmEmbed(index, chunks.length)], files: batchFiles(batchContents, index) });
+    }
+    ticket.transcriptSentAt = Date.now();
+    saveDatabase();
+  }
+
+  if (logChannel && !ticket.transcriptLogSentAt) {
+    for (let index = 0; index < chunks.length; index += 3) {
+      const batchContents = chunks.slice(index, index + 3);
+      await logChannel.send({
+        embeds: [new EmbedBuilder()
+          .setColor(db.config.embedColor || "#5865F2")
+          .setTitle("TRANSCRIPT DE TICKET")
+          .setDescription(`**${ticketChannel.name}** · ${ticketType}\nAberto por <@${ticket.creatorId}> · encerrado por <@${ticket.closedBy || ""}>${partInfo(index, chunks.length)}`)
+          .setTimestamp(ticket.closedAt || Date.now())],
+        files: batchFiles(batchContents, index),
+        allowedMentions: { parse: [] }
+      });
+    }
+    ticket.transcriptLogSentAt = Date.now();
+    saveDatabase();
   }
 }
 
@@ -2001,7 +2032,6 @@ async function createTicketChannel(interaction, ticketType = "support") {
 
   db.tickets[ticketId] = ticket;
   saveDatabase();
-  sendBotLog(guild.id, "ticket", "Ticket aberto", `**Tipo:** ${type.label}\n**Pessoa:** <@${interaction.user.id}>\n**Canal:** <#${thread.id}>`);
 
   const welcomeMessage = await thread.send(asComponentsV2Card({
     content: [
@@ -2193,6 +2223,82 @@ function sendBotLog(guildId, kind, title, description) {
   })().catch(error => console.warn("Falha ao enviar log:", error?.message || error));
 }
 
+async function sendFinalizedBetTranscript(bet, guild) {
+  if (!bet || bet.transcriptLogSentAt) return Boolean(bet?.transcriptLogSentAt);
+  const logChannelId = db.config.logQueueChannelId || db.config.logBetChannelId;
+  if (!logChannelId) return false;
+  const logChannel = guild.channels.cache.get(logChannelId)
+    || await guild.channels.fetch(logChannelId).catch(() => null);
+  if (!logChannel?.isTextBased?.()) throw new Error("O canal de logs das filas não está acessível.");
+
+  const matchChannel = bet.channelId
+    ? (guild.channels.cache.get(bet.channelId) || await guild.channels.fetch(bet.channelId).catch(() => null))
+    : null;
+  const messages = [];
+  if (matchChannel?.messages?.fetch) {
+    let before;
+    while (true) {
+      const batch = await matchChannel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+      if (!batch.size) break;
+      messages.push(...batch.values());
+      const oldest = batch.last();
+      if (batch.size < 100 || !oldest || oldest.id === before) break;
+      before = oldest.id;
+    }
+  }
+  messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  const displayUser = id => guild.members.cache.get(id)?.displayName
+    || client.users.cache.get(id)?.globalName
+    || client.users.cache.get(id)?.username
+    || `Jogador ${id}`;
+  const text = [
+    "TRANSCRIPT DA PARTIDA",
+    `Partida: ${bet.format} · ${modalityName(bet.modality)}${bet.mode ? ` · ${bet.mode}` : ""}`,
+    `Aposta: ${money(bet.value)} por jogador · Prêmio: ${money(Number(bet.value) * 2)}`,
+    `Jogadores: ${(bet.players || []).map(displayUser).join(" e ")}`,
+    `Mediador: ${bet.mediatorId ? displayUser(bet.mediatorId) : "Não informado"}`,
+    `Vencedor: ${bet.winnerId ? displayUser(bet.winnerId) : "Sem vencedor registrado"}`,
+    `Resultado: ${bet.resultType === "wo" ? "Vitória por W.O." : bet.winnerId ? "Vitória" : "Encerrada sem resultado"}`,
+    `Finalizada em: ${new Date(bet.finishedAt || Date.now()).toLocaleString("pt-BR")}`,
+    "",
+    "CONVERSA",
+    "────────────────────────"
+  ];
+  for (const message of messages) {
+    const stamp = new Date(message.createdTimestamp).toLocaleString("pt-BR");
+    const author = message.member?.displayName || message.author?.globalName || message.author?.username || "Bot";
+    let content = String(message.content || "");
+    for (const user of message.mentions?.users?.values?.() || []) {
+      content = content.replace(new RegExp(`<@!?${user.id}>`, "g"), `@${user.globalName || user.username}`);
+    }
+    text.push(`[${stamp}] ${author}${content ? `: ${content}` : ""}`);
+    for (const embed of message.embeds || []) {
+      if (embed.title) text.push(`  ${embed.title}`);
+      if (embed.description) text.push(`  ${embed.description.replace(/\n/g, "\n  ")}`);
+    }
+    for (const attachment of message.attachments?.values?.() || []) {
+      text.push(`  Arquivo: ${attachment.name || "anexo"} — ${attachment.url}`);
+    }
+  }
+  if (!messages.length) text.push("Não há mensagens disponíveis no tópico.");
+
+  const file = new AttachmentBuilder(Buffer.from(text.join("\n"), "utf8"), {
+    name: `transcript-partida-${bet.id}.txt`
+  });
+  await logChannel.send({
+    embeds: [makeEmbed("TRANSCRIPT DA FILA FINALIZADA", [
+      `**Partida:** ${bet.format} · ${modalityName(bet.modality)}`,
+      `**Jogadores:** ${(bet.players || []).map(id => `<@${id}>`).join(" · ")}`,
+      `**Resultado:** ${bet.winnerId ? `vitória de <@${bet.winnerId}>` : "encerrada sem vencedor"}`
+    ].join("\n"))],
+    files: [file],
+    allowedMentions: { parse: [] }
+  });
+  bet.transcriptLogSentAt = Date.now();
+  saveDatabase();
+  return true;
+}
+
 function configSingleChannelComponents(customId, placeholder, channelType = ChannelType.GuildText) {
   return [
     new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setChannelTypes(channelType)),
@@ -2229,16 +2335,22 @@ function configButtons() {
    COMANDOS SLASH
 ======================================================== */
 
+function nestedComponents(components, result = []) {
+  for (const component of components || []) {
+    result.push(component);
+    if (component?.components?.length) nestedComponents(component.components, result);
+  }
+  return result;
+}
+
 function isQueuePublicationMessage(message, botUserId) {
   if (!message || message.author?.id !== botUserId) return false;
 
-  for (const row of message.components || []) {
-    for (const component of row.components || []) {
-      const customId = component.customId || component.custom_id || "";
-      if (/^(?:queue_join|queue_leave)\|/.test(customId)) return true;
-      if (/^streamer_(?:join|leave|activate|deactivate)\|/.test(customId)) return true;
-      if (customId === "mediator_join" || customId === "mediator_leave") return true;
-    }
+  for (const component of nestedComponents(message.components)) {
+    const customId = component.customId || component.custom_id || "";
+    if (/^(?:queue_join|queue_leave)\|/.test(customId)) return true;
+    if (/^streamer_(?:join|leave|activate|deactivate)\|/.test(customId)) return true;
+    if (customId === "mediator_join" || customId === "mediator_leave") return true;
   }
 
   const title = String(message.embeds?.[0]?.title || "").trim();
@@ -2275,6 +2387,24 @@ async function deleteAllQueuePublications(guild) {
     }
   };
 
+  const deleteQueueBatch = async (channel, messages) => {
+    const pending = messages.filter(message => !deletedIds.has(message.id));
+    const recent = pending.filter(message => Date.now() - message.createdTimestamp < 14 * 24 * 60 * 60 * 1000);
+    if (recent.length > 1 && typeof channel.bulkDelete === "function") {
+      try {
+        const removed = await channel.bulkDelete(recent, true);
+        for (const message of removed.values()) {
+          deletedIds.add(message.id);
+          deletedMessages++;
+        }
+      } catch (error) {
+        console.warn("A exclusão em lote não foi possível; vou remover as filas individualmente:", error?.message || error);
+      }
+    }
+    const remaining = pending.filter(message => !deletedIds.has(message.id));
+    await runWithConcurrency(remaining, 8, deleteIfQueue);
+  };
+
   const tracked = [];
   const addTracked = (queue) => {
     if (!queue || (queue.guildId && queue.guildId !== guild.id)) return;
@@ -2287,7 +2417,7 @@ async function deleteAllQueuePublications(guild) {
     tracked.push({ channelId: db.config.mediatorQueueChannelId, messageId: db.config.mediatorQueueMessageId });
   }
 
-  await runWithConcurrency(tracked, 3, async ref => {
+  await runWithConcurrency(tracked, 8, async ref => {
     if (!ref?.channelId || !ref?.messageId) return;
     const key = `${ref.channelId}:${ref.messageId}`;
     if (visitedMessages.has(key)) return;
@@ -2304,7 +2434,7 @@ async function deleteAllQueuePublications(guild) {
   const channelsById = new Map(guild.channels.cache);
   const textParents = Array.from(channelsById.values())
     .filter(channel => channel.threads?.fetchActive && channel.threads?.fetchArchived);
-  await runWithConcurrency(textParents, 3, async channel => {
+  await runWithConcurrency(textParents, 6, async channel => {
     const active = await channel.threads.fetchActive().catch(() => null);
     for (const thread of active?.threads?.values?.() || []) channelsById.set(thread.id, thread);
 
@@ -2326,7 +2456,7 @@ async function deleteAllQueuePublications(guild) {
 
   const channels = Array.from(channelsById.values())
     .filter(channel => channel.isTextBased?.() && channel.messages?.fetch);
-  await runWithConcurrency(channels, 3, async channel => {
+  await runWithConcurrency(channels, 6, async channel => {
     let before;
     while (true) {
       const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
@@ -2337,12 +2467,14 @@ async function deleteAllQueuePublications(guild) {
       if (!batch.size) return;
 
       scannedMessages += batch.size;
+      const queueMessages = [];
       for (const message of batch.values()) {
         const key = `${channel.id}:${message.id}`;
         if (visitedMessages.has(key)) continue;
         visitedMessages.add(key);
-        await deleteIfQueue(message);
+        if (isQueuePublicationMessage(message, client.user?.id)) queueMessages.push(message);
       }
+      await deleteQueueBatch(channel, queueMessages);
 
       const oldest = batch.last();
       if (batch.size < 100 || !oldest || oldest.id === before) return;
@@ -2380,6 +2512,10 @@ async function registerCommands() {
       .addSubcommand(subcommand =>
         subcommand
           .setName("fila")
+          .setDescription("Atualiza/repara as filas existentes sem apagar os dados."))
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName("filas")
           .setDescription("Atualiza/repara as filas existentes sem apagar os dados.")),
 
     new SlashCommandBuilder()
@@ -2598,7 +2734,9 @@ client.on("messageCreate", async message => {
       if (imported) saveDatabase();
       const history = db.playerMatchLogs[player.id];
       const entries = filterPlayerHistory(
-        Object.values(Array.isArray(history) ? history : history || {}).filter(entry => entry.guildId === message.guild.id),
+        Object.values(Array.isArray(history) ? history : history || {}).filter(entry =>
+          entry.guildId === message.guild.id && (entry.outcome === "win" || entry.outcome === "loss")
+        ),
         "all"
       );
       const displayName = message.guild.members.cache.get(player.id)?.displayName || player.globalName || player.username;
@@ -2648,10 +2786,10 @@ client.on("messageCreate", async message => {
         bet.roomPassword = roomPassword;
 
         const paymentValue = Number((bet.value * 2).toFixed(2));
-        const paymentLabel = paymentValue.toFixed(2).replace(".", "-");
+        const paymentChannelName = `💰・pagamento・${paymentValue.toFixed(2).replace(".", ",")}`;
 
         if (message.channel && message.channel.isTextBased() && "setName" in message.channel) {
-          await message.channel.setName(`pagar-${paymentLabel}`).catch(error => {
+          await message.channel.setName(paymentChannelName).catch(error => {
             console.error("❌ Não foi possível renomear o canal:", error);
           });
         }
@@ -2662,23 +2800,16 @@ client.on("messageCreate", async message => {
         const adminMention = adminIds.length ? `<@${adminIds[0]}>` : "ADM responsável";
         const playerMentions = bet.players.map(id => `<@${id}>`).join(" ");
 
-        const roomEmbed = makeEmbed("🎮 SALA FREE FIRE", [
-          "**Dados da sala detectados automaticamente.**",
+        const roomEmbed = makeEmbed("SALA CRIADA", [
+          `**Jogadores:** ${playerMentions}`,
+          `**Aposta:** ${money(bet.value)}　·　**Prêmio:** ${money(paymentValue)}`,
           "",
-          `👥 **Jogadores:** ${playerMentions}`,
-          `💰 **Valor da aposta:** ${money(bet.value)}`,
-          `🏆 **Prêmio ao vencedor:** ${money(paymentValue)}`,
-          "",
-          "🎮 **ACESSO À SALA**",
-          `🆔 **ID:** \`${roomId}\``,
-          `🔐 **Senha:** \`${roomPassword}\``,
-          "",
-          `📌 **Canal de pagamento:** \`pagar-${paymentLabel}\``,
-          "",
-          `📢 ${adminMention} — sala confirmada e dados identificados.`
+          `**ID da sala:** \`${roomId}\``,
+          `**Senha:** \`${roomPassword}\``,
+          `**Responsável:** ${adminMention}`
         ].join("\n"));
 
-        await message.channel.send({
+        await message.channel.send(asComponentsV2Card({
           embeds: [roomEmbed],
           components: [
             new ActionRowBuilder().addComponents(
@@ -2686,7 +2817,7 @@ client.on("messageCreate", async message => {
               new ButtonBuilder().setCustomId(`room_copy_password|${bet.id}`).setLabel("Copiar senha").setEmoji("🔐").setStyle(ButtonStyle.Secondary)
             )
           ]
-        }).catch(error => console.error("❌ Não foi possível enviar os dados da sala:", error));
+        }, true)).catch(error => console.error("❌ Não foi possível enviar os dados da sala:", error));
         return;
       }
     }
@@ -2801,16 +2932,11 @@ client.on("messageCreate", async message => {
       return message.reply(asComponentsV2Card({
         embeds: [
           makeEmbed(
-            "👨‍⚖️ PAINEL DO MEDIADOR",
+            "PAINEL DO MEDIADOR",
             [
-              "**Central de controle desta aposta.**",
-              "",
-              `🎮 **Formato:** ${bet.format} • ${modalityName(bet.modality)}`,
-              `💰 **Valor:** ${money(bet.value)} • 🏆 **Prêmio:** ${money(bet.value * 2)}`,
-              `👥 **Jogadores:** ${bet.players.map(id => `<@${id}>`).join(" • ")}`,
-              "",
-              "**Ações disponíveis**",
-              "Use o menu abaixo para escolher o vencedor, registrar W.O., identificar a sala ou finalizar a aposta."
+              `**Formato:** ${bet.format} · ${modalityName(bet.modality)}`,
+              `**Aposta:** ${money(bet.value)} · **Prêmio:** ${money(bet.value * 2)}`,
+              `**Jogadores:** ${bet.players.map(id => `<@${id}>`).join(" · ")}`
             ].join("\n")
           )
         ],
@@ -2819,25 +2945,16 @@ client.on("messageCreate", async message => {
     }
     if (command === ".p") {
       const stats = userStats(message.author.id);
-
-      return message.reply({
-        embeds: [
-          makeEmbed(
-            `PERFIL | ${message.author.username.toLocaleUpperCase("pt-BR")}`,
-            [
-              "**RESUMO DO SEU DESEMPENHO**",
-              "Confira seus resultados registrados nas filas.",
-              "",
-              "━━━━━━━━━━━━━━━━━━",
-              `**Vitórias**　\`${stats.wins}\``,
-              `**Derrotas**　\`${stats.losses}\``,
-              `**Vitórias por W.O.**　\`${stats.woWins}\``,
-              `**Coins**　\`${stats.coins}\``,
-              "━━━━━━━━━━━━━━━━━━"
-            ].join("\n")
-          )
-        ]
-      });
+      const total = Number(stats.wins || 0) + Number(stats.losses || 0);
+      const performance = total ? `${((Number(stats.wins || 0) / total) * 100).toFixed(1)}%` : "0.0%";
+      const displayName = message.member?.displayName || message.author.globalName || message.author.username;
+      const profile = makeEmbed(`Perfil de ${displayName}.`, [
+        `**Vitórias:** \`${stats.wins || 0}\`　·　**Derrotas:** \`${stats.losses || 0}\``,
+        `**Consecutivas:** \`${consecutiveWins(message.author.id)}\`　·　**Total:** \`${total}\``,
+        `**Desempenho:** \`${performance}\`　·　**Coins:** \`${stats.coins || 0}\``
+      ].join("\n"))
+        .setThumbnail(message.author.displayAvatarURL({ extension: "png", size: 256 }));
+      return message.reply({ embeds: [profile] });
     }
 
   } catch (error) {
@@ -2994,12 +3111,11 @@ client.on("interactionCreate", async interaction => {
         try {
           const result = await deleteAllQueuePublications(interaction.guild);
           return interaction.editReply([
-            "Busca concluída no servidor.",
-            `Mensagens analisadas: **${result.scannedMessages}**`,
-            `Publicações de fila apagadas: **${result.deletedMessages}**`,
-            `Falhas ao apagar: **${result.failedDeletes}**`,
-            `Canais sem acesso: **${result.inaccessibleChannels}**`,
-            "As configurações e os dados do banco foram mantidos."
+            "Pronto! Revisei as mensagens do servidor.",
+            `Filas removidas: **${result.deletedMessages}** · mensagens verificadas: **${result.scannedMessages}**`,
+            result.failedDeletes ? `Não consegui remover **${result.failedDeletes}** publicação(ões); confira as permissões do bot.` : "Todas as filas encontradas foram removidas.",
+            result.inaccessibleChannels ? `Não consegui conferir **${result.inaccessibleChannels}** canal(is) por falta de acesso.` : "",
+            "Suas configurações e os dados salvos continuam preservados."
           ].join("\n"));
         } catch (error) {
           console.error("❌ Erro no comando /apagar filas:", error);
@@ -3007,8 +3123,8 @@ client.on("interactionCreate", async interaction => {
         }
       }
 
-      /* /atualizar fila — encontra, repara e republica filas sem apagar dados */
-      if (interaction.commandName === "atualizar" && interaction.options.getSubcommand() === "fila") {
+      /* /atualizar fila(s) — encontra, repara e republica filas sem apagar dados */
+      if (interaction.commandName === "atualizar" && ["fila", "filas"].includes(interaction.options.getSubcommand())) {
         if (!(await requireAdmin(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         let updated = 0;
@@ -3094,17 +3210,13 @@ client.on("interactionCreate", async interaction => {
           if (!recent) return;
           for (const message of recent.values()) {
             if (message.author?.id !== client.user?.id) continue;
-            let rawId = null;
-            for (const row of message.components || []) {
-              for (const component of row.components || []) {
-                const customId = component.customId || component.custom_id || "";
-                if (customId.startsWith("queue_join|") || customId.startsWith("queue_leave|")) {
-                  rawId = customId.split("|")[1] || null;
-                  if (rawId) break;
-                }
-              }
-              if (rawId) break;
-            }
+            const queueComponent = nestedComponents(message.components).find(component => {
+              const customId = component.customId || component.custom_id || "";
+              return customId.startsWith("queue_join|") || customId.startsWith("queue_leave|");
+            });
+            const rawId = queueComponent
+              ? (queueComponent.customId || queueComponent.custom_id || "").split("|")[1] || null
+              : null;
             recoverFromMessage(message, channel, rawId);
           }
         });
@@ -3456,7 +3568,7 @@ client.on("interactionCreate", async interaction => {
         const pix = getPaymentPix();
         if (!pix?.key) return deny(interaction, "❌ Nenhuma chave PIX está configurada.");
         return interaction.reply({
-          content: `Chave PIX para copiar:\n${pix.key}`,
+          content: pix.key,
           flags: MessageFlags.Ephemeral
         });
       }
@@ -3960,7 +4072,6 @@ client.on("interactionCreate", async interaction => {
         queue.playerModes = queue.playerModes || {};
         queue.playerModes[interaction.user.id] = selectedMode;
         queue.players.push(interaction.user.id);
-        sendBotLog(interaction.guildId, "queue", "Jogador entrou na fila", `**Fila:** ${queueTitle(queue)}\n**Jogador:** <@${interaction.user.id}>\n**Valor:** ${money(queue.value)}`);
 
         if (
           queue.players.length >= requiredPlayers(queue.format) &&
@@ -3983,7 +4094,6 @@ client.on("interactionCreate", async interaction => {
           saveDatabase();
           try {
             await betOpening;
-            sendBotLog(interaction.guildId, "bet", "Aposta formada", `**Fila:** ${queueTitle(queue)}\n**Jogadores:** ${matchedPlayers.map(id => `<@${id}>`).join(" • ")}\n**Valor:** ${money(queue.value)}`);
           } catch (error) {
             console.error("Não foi possível abrir o tópico privado da aposta:", error?.message || error);
             await interaction.followUp({
@@ -4025,7 +4135,6 @@ client.on("interactionCreate", async interaction => {
         void refreshQueueMessage(queue, interaction.guild).catch(() => {});
 
         if (queue.players.length < oldLength) {
-          sendBotLog(interaction.guildId, "queue", "Jogador saiu da fila", `**Fila:** ${queueTitle(queue)}\n**Jogador:** <@${interaction.user.id}>\n**Valor:** ${money(queue.value)}`);
           return;
         }
         // Erro real continua sendo informado, mas nunca há mensagem para uma saída bem-sucedida.
@@ -4333,6 +4442,7 @@ client.on("interactionCreate", async interaction => {
       }
 
       if (action === "med_finish") {
+        await interaction.deferUpdate();
         if (!(await requireMediator(interaction))) return;
 
         const bet = db.bets[parts[0]];
@@ -4349,17 +4459,32 @@ client.on("interactionCreate", async interaction => {
         }
 
         if (bet.confirmedBy.length < bet.players.length) return deny(interaction, "🔒 Aguarde os 2 jogadores confirmarem.");
-        bet.status = "finished";
-        syncPlayerMatchHistory(bet);
-        saveDatabase();
+        if (bet.status !== "finished") {
+          bet.status = "finished";
+          bet.finishedAt = Date.now();
+          syncPlayerMatchHistory(bet);
+          saveDatabase();
+        }
 
-        await interaction.reply({
-          embeds: [
-            makeEmbed(
-              "🏁 APOSTA FINALIZADA",
-              "A aposta foi finalizada pelo Mediador."
-            )
-          ]
+        try {
+          const logged = await sendFinalizedBetTranscript(bet, interaction.guild);
+          if (!logged) {
+            return interaction.followUp({
+              embeds: [makeEmbed("CONFIGURE O CANAL DE LOGS", "Selecione um canal em **/config → Logs de filas** para salvar o transcript desta partida. A conversa continua disponível neste tópico.")],
+              flags: MessageFlags.Ephemeral
+            });
+          }
+        } catch (error) {
+          console.error("Não foi possível salvar o transcript da partida:", error?.message || error);
+          return interaction.followUp({
+            embeds: [makeEmbed("TRANSCRIPT AINDA NÃO SALVO", `A partida foi finalizada, mas o transcript não foi enviado ao canal de logs. O tópico continua disponível para tentar de novo.\n\n${error?.message || "Confira as permissões do bot."}`)],
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        await interaction.followUp({
+          embeds: [makeEmbed("PARTIDA FINALIZADA", "O transcript foi salvo no canal de logs. A conversa será encerrada em instantes.")],
+          flags: MessageFlags.Ephemeral
         });
 
         setTimeout(() => {
@@ -4459,20 +4584,18 @@ client.on("interactionCreate", async interaction => {
             interaction.user.username;
 
           await claimTicket(ticket, ticketChannel, interaction.user.id, displayName);
-          sendBotLog(ticket.guildId, "ticket", "Ticket assumido", `**Responsável:** <@${interaction.user.id}>\n**Ticket:** <#${ticket.channelId}>\n**Pessoa:** <@${ticket.creatorId}>`);
 
-          // Atualiza somente o painel existente, sem criar mensagem de confirmação.
-          return interaction.editReply({
-            content: "",
+          // Mantém o cartão do ticket e o menu visíveis após a atribuição.
+          return interaction.message.edit(asComponentsV2Card({
+            embeds: [ticketPanelEmbed(ticket, ticketGuild)],
             components: ticketPanelComponents(ticket.id, ticket.claimedBy)
-          }).catch(() => {});
+          })).catch(() => {});
         } catch (error) {
           console.error("❌ Erro ao assumir ticket pelo painel:", error);
           if (interaction.deferred || interaction.replied) {
-            return interaction.editReply({
-              content: `❌ ${error.message || "Não foi possível assumir o ticket."}`,
-              embeds: [],
-              components: ticketPanelComponents(ticket.id, ticket.claimedBy || null)
+            return interaction.followUp({
+              content: `Não consegui assumir o ticket: ${error.message || "tente novamente."}`,
+              flags: MessageFlags.Ephemeral
             }).catch(() => {});
           }
           return deny(interaction, `❌ ${error.message || "Não foi possível assumir o ticket."}`);
@@ -4485,17 +4608,25 @@ client.on("interactionCreate", async interaction => {
         ticket.closedBy = interaction.user.id;
         ticket.closedAt = ticket.closedAt || Date.now();
 
-        if (!ticket.transcriptSentAt) {
+        if (!ticket.transcriptSentAt || (db.config.logTicketChannelId && !ticket.transcriptLogSentAt)) {
           try {
+            if (!ticket.closingNoticeSentAt) {
+              await ticketChannel.send({ embeds: [makeEmbed(
+                "TICKET SERÁ ENCERRADO",
+                "O atendimento está sendo encerrado. O transcript será enviado no privado de quem abriu o ticket."
+              )] });
+              ticket.closingNoticeSentAt = Date.now();
+              saveDatabase();
+            }
             await sendTicketTranscript(ticket, ticketChannel);
-            ticket.transcriptSentAt = Date.now();
+            ticket.transcriptSentAt ||= Date.now();
             saveDatabase();
           } catch (error) {
             console.error("❌ Não foi possível enviar o transcript do ticket:", error?.message || error);
             return interaction.editReply({
               embeds: [makeEmbed(
-                "TRANSCRIPT NÃO ENVIADO",
-                "Não consegui enviar o transcript por mensagem privada. O tópico continua disponível; libere suas mensagens privadas e tente encerrar novamente."
+                "ENCERRAMENTO PENDENTE",
+                `Não consegui concluir o envio do transcript. O ticket continua aberto para que você possa tentar novamente.\n\n${error?.message || "Confira os canais e permissões de logs."}`
               )],
               components: []
             }).catch(() => {});
@@ -4517,7 +4648,6 @@ client.on("interactionCreate", async interaction => {
 
         delete db.tickets[ticket.id];
         saveDatabase();
-        sendBotLog(ticket.guildId, "ticket", "Ticket encerrado", `**Responsável:** <@${interaction.user.id}>\n**Ticket:** ${ticketChannel.name}\n**Transcript enviado:** <@${ticket.creatorId}>`);
         return interaction.editReply({
           embeds: [makeEmbed(
             `${ticketType.emoji} TICKET ENCERRADO`,
@@ -5298,6 +5428,7 @@ client.on("interactionCreate", async interaction => {
       }
 
       if (interaction.customId.startsWith("result_normal|") || interaction.customId.startsWith("result_wo|")) {
+        await interaction.deferUpdate();
         if (!(await requireMediator(interaction))) return;
         const [resultAction, betId] = interaction.customId.split("|");
         const bet = db.bets[betId];
@@ -5313,20 +5444,19 @@ client.on("interactionCreate", async interaction => {
         bet.status = "result_set";
         userStats(winnerId).wins += 1;
         userStats(loserId).losses += 1;
+        userStats(winnerId).coins = Number(userStats(winnerId).coins || 0) + 1;
+        bet.coinAwardedAt = Date.now();
         if (bet.resultType === "wo") userStats(winnerId).woWins += 1;
-        syncPlayerMatchHistory(bet);
         saveDatabase();
-        return interaction.update({
-          embeds: [makeEmbed(bet.resultType === "wo" ? "🚫 VITÓRIA POR W.O." : "🏆 VENCEDOR DEFINIDO", [
-            "**Resultado registrado com sucesso.**",
-            "",
-            `🏆 **Vencedor:** <@${winnerId}>`,
-            `❌ **Derrotado:** <@${loserId}>`,
-            "",
-            "🏁 **Próximo passo:** finalize a aposta pelo painel do Mediador."
+        return interaction.editReply(asComponentsV2Card({
+          embeds: [makeEmbed(bet.resultType === "wo" ? "VITÓRIA POR W.O." : "RESULTADO DA PARTIDA", [
+            `**Vencedor:** <@${winnerId}>`,
+            `**Perdedor:** <@${loserId}>`,
+            `**Prêmio:** ${money(Number(bet.value) * 2)}`,
+            "**Recompensa:** +1 coin"
           ].join("\n"))],
           components: []
-        });
+        }, true));
       }
 
       const filaSlotSelection = interaction.customId.match(/^fila_slot_(format|modality)_([1-4])$/);
@@ -5471,10 +5601,21 @@ client.on("interactionCreate", async interaction => {
         });
       }
       if (choice === "finish") {
-        bet.status = "finished";
-        syncPlayerMatchHistory(bet);
-        saveDatabase();
-        await interaction.reply({ embeds: [makeEmbed("🏁 APOSTA FINALIZADA", "**A aposta foi finalizada com sucesso pelo Mediador.**\n\n✅ O atendimento foi encerrado.")] });
+        await interaction.deferUpdate();
+        if (bet.status !== "finished") {
+          bet.status = "finished";
+          bet.finishedAt = Date.now();
+          syncPlayerMatchHistory(bet);
+          saveDatabase();
+        }
+        try {
+          const logged = await sendFinalizedBetTranscript(bet, interaction.guild);
+          if (!logged) return interaction.followUp({ content: "Configure o canal em **/config → Logs de filas** para salvar o transcript antes de encerrar a conversa.", flags: MessageFlags.Ephemeral });
+        } catch (error) {
+          console.error("Não foi possível salvar o transcript da partida:", error?.message || error);
+          return interaction.followUp({ content: "Não consegui salvar o transcript. A conversa continua disponível para tentar novamente.", flags: MessageFlags.Ephemeral });
+        }
+        await interaction.followUp({ embeds: [makeEmbed("PARTIDA FINALIZADA", "O transcript foi salvo nos logs. A conversa será encerrada em instantes.")], flags: MessageFlags.Ephemeral });
         setTimeout(() => interaction.channel?.delete("Aposta finalizada").catch(() => {}), 5000);
         return;
       }
