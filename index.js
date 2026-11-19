@@ -601,6 +601,19 @@ function makeEmbed(title, description = "") {
   return result;
 }
 
+function resolveCustomEmojiShortcodes(text, guild) {
+  const source = String(text ?? "");
+  const emojiCache = guild?.emojis?.cache;
+  if (!emojiCache?.size) return source;
+
+  // Keep Discord's explicit <:name:id> / <a:name:id> markup intact, and also
+  // allow convenient :name: shortcodes in the /embeds modal.
+  return source.replace(/(?<!<):([a-zA-Z0-9_]{2,32}):/g, (match, name) => {
+    const emoji = emojiCache.find(item => item.name === name);
+    return emoji ? emoji.toString() : match;
+  });
+}
+
 function adminCheck(interaction) {
   return Boolean(
     interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
@@ -3353,7 +3366,7 @@ client.on("interactionCreate", async interaction => {
             new TextInputBuilder()
               .setCustomId("embed_description")
               .setLabel("Descrição")
-              .setPlaceholder("Digite o conteúdo da embed")
+              .setPlaceholder("Texto, :nome_do_emoji: ou <:nome:ID>")
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
               .setMaxLength(4000)
@@ -5035,11 +5048,11 @@ client.on("interactionCreate", async interaction => {
       if (interaction.customId === "embed_builder") {
         if (!(await requireAdmin(interaction))) return;
 
-        const title = interaction.fields.getTextInputValue("embed_title").trim();
-        const description = interaction.fields.getTextInputValue("embed_description").trim();
+        const title = resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_title").trim(), interaction.guild);
+        const description = resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_description").trim(), interaction.guild);
         const colorInput = interaction.fields.getTextInputValue("embed_color").trim();
         const image = interaction.fields.getTextInputValue("embed_image").trim();
-        const footer = interaction.fields.getTextInputValue("embed_footer").trim();
+        const footer = resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_footer").trim(), interaction.guild);
 
         const color = colorInput || db.config.embedColor || "#5865F2";
         if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
