@@ -601,17 +601,46 @@ function makeEmbed(title, description = "") {
   return result;
 }
 
-function resolveCustomEmojiShortcodes(text, guild) {
-  const source = String(text ?? "");
-  const emojiCache = guild?.emojis?.cache;
-  if (!emojiCache?.size) return source;
+async function resolveCustomEmojiShortcodes(text, guild) {
+  let source = String(text ?? "");
 
-  // Keep Discord's explicit <:name:id> / <a:name:id> markup intact, and also
-  // allow convenient :name: shortcodes in the /embeds modal.
-  return source.replace(/(?<!<):([a-zA-Z0-9_]{2,32}):/g, (match, name) => {
-    const emoji = emojiCache.find(item => item.name === name);
-    return emoji ? emoji.toString() : match;
+  // Keep Discord's explicit <:name:id> / <a:name:id> tags intact. Also accept
+  // :name: shortcodes and :id: tokens, resolving every guild emoji, static or animated.
+  const explicitTags = [];
+  source = source.replace(/<a?:[a-zA-Z0-9_]{2,32}:\d{15,22}>/g, tag => {
+    const marker = `\u0000CUSTOM_EMOJI_${explicitTags.length}\u0000`;
+    explicitTags.push(tag);
+    return marker;
   });
+  const tokenPattern = /:([a-zA-Z0-9_]{2,32}|\d{15,22}):/g;
+  const tokens = [...source.matchAll(tokenPattern)];
+  if (!tokens.length) return source.replace(/\u0000CUSTOM_EMOJI_(\d+)\u0000/g, (_, index) => explicitTags[Number(index)]);
+
+  const guildsToSearch = () => {
+    const guilds = new Map();
+    if (guild?.id) guilds.set(guild.id, guild);
+    for (const knownGuild of client.guilds.cache.values()) guilds.set(knownGuild.id, knownGuild);
+    return guilds.values();
+  };
+  const findEmoji = token => {
+    for (const knownGuild of guildsToSearch()) {
+      const emojis = knownGuild.emojis?.cache;
+      const found = /^\d+$/.test(token)
+        ? emojis?.get(token)
+        : emojis?.find(item => item.name?.toLowerCase() === token.toLowerCase());
+      if (found) return found;
+    }
+    return null;
+  };
+
+  if (tokens.some(([, token]) => !findEmoji(token)) && guild?.emojis) {
+    // The active server's emoji list can be absent from cache when the bot starts.
+    await guild.emojis.fetch().catch(() => null);
+  }
+
+  return source
+    .replace(tokenPattern, (match, token) => findEmoji(token)?.toString() || match)
+    .replace(/\u0000CUSTOM_EMOJI_(\d+)\u0000/g, (_, index) => explicitTags[Number(index)]);
 }
 
 function adminCheck(interaction) {
@@ -5048,11 +5077,11 @@ client.on("interactionCreate", async interaction => {
       if (interaction.customId === "embed_builder") {
         if (!(await requireAdmin(interaction))) return;
 
-        const title = resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_title").trim(), interaction.guild);
-        const description = resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_description").trim(), interaction.guild);
+        const title = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_title").trim(), interaction.guild);
+        const description = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_description").trim(), interaction.guild);
         const colorInput = interaction.fields.getTextInputValue("embed_color").trim();
         const image = interaction.fields.getTextInputValue("embed_image").trim();
-        const footer = resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_footer").trim(), interaction.guild);
+        const footer = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("embed_footer").trim(), interaction.guild);
 
         const color = colorInput || db.config.embedColor || "#5865F2";
         if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
