@@ -6132,6 +6132,12 @@ let reconnecting = false;
 
 client.once("clientReady", () => {
   lastReadyAt = Date.now();
+  // Populate the guild emoji caches used by every synchronous embed builder.
+  // This lets :name: shortcodes (including animated emojis) resolve even when
+  // Discord.js has not populated the emoji cache yet during startup.
+  void Promise.allSettled(
+    [...client.guilds.cache.values()].map(guild => guild.emojis.fetch())
+  );
 });
 
 setInterval(async () => {
