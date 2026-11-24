@@ -1034,63 +1034,13 @@ function queueJoinButton(customId, label = "Entrar na fila") {
   );
 }
 
-function asComponentsV2Card(payload, force = false) {
-  const components = (payload.components || []).map(component =>
-    typeof component?.toJSON === "function" ? component.toJSON() : component
-  );
-  const hasSelect = components.some(row =>
-    (row?.components || []).some(component => [3, 5, 6, 7, 8].includes(component?.type))
-  );
-  if (!force && !hasSelect) return payload;
-
-  const embeds = (payload.embeds || []).map(embed =>
-    typeof embed?.toJSON === "function" ? embed.toJSON() : embed
-  );
-  const children = [];
-  for (const embed of embeds) {
-    const parts = [];
-    if (embed.title) parts.push(`# ${embed.title}`);
-    if (embed.description) parts.push(embed.description);
-    for (const field of embed.fields || []) {
-      parts.push(`**${field.name}**\n${field.value}`);
-    }
-    if (embed.footer?.text) parts.push(`-# ${embed.footer.text}`);
-    const text = parts.join("\n\n");
-    if (text) {
-      for (let offset = 0; offset < text.length; offset += 3900) {
-        children.push({ type: 10, content: text.slice(offset, offset + 3900) });
-      }
-    }
-    if (embed.image?.url) {
-      children.push({ type: 12, items: [{ media: { url: embed.image.url } }] });
-    }
-  }
-  if (payload.content) {
-    children.unshift({ type: 10, content: String(payload.content).slice(0, 3900) });
-  }
-  if (components.length) {
-    if (children.length) children.push({ type: 14, divider: true, spacing: 1 });
-    children.push(...components);
-  }
-
-  const color = embeds.find(embed => Number.isInteger(embed.color))?.color;
-  const container = { type: 17, components: children };
-  if (Number.isInteger(color)) container.accent_color = color;
-  container.toJSON = () => ({
-    type: container.type,
-    ...(Number.isInteger(container.accent_color) ? { accent_color: container.accent_color } : {}),
-    components: container.components
-  });
-  const { content, embeds: _embeds, components: _components, flags: originalFlags, ...rest } = payload;
-  const flags = (Number(originalFlags) || 0) | 32768;
-  return { ...rest, flags, components: [container] };
+function asComponentsV2Card(payload) {
+  // Keep standard Discord embeds and action rows; do not convert them into square V2 cards.
+  return payload;
 }
 
 function queueCardPayload(queue) {
-  const payload = asComponentsV2Card({ embeds: [queueEmbed(queue)], components: queueComponents(queue) }, true);
-  // Mantém a cor das informações neutra; as cores verde/vermelha ficam nos botões.
-  if (payload.components?.[0]) delete payload.components[0].accent_color;
-  return payload;
+  return { embeds: [queueEmbed(queue)], components: queueComponents(queue) };
 }
 
 function queueComponents(queue) {
