@@ -160,6 +160,16 @@ function createDefaultDatabase() {
       ticketPanelBanner: null,
       ticketPanelThumbnail: null,
       ticketPanelColor: null,
+      mediatorQueueTitle: "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES",
+      mediatorQueueDescription: null,
+      mediatorQueueBanner: null,
+      mediatorQueueThumbnail: null,
+      mediatorQueueColor: null,
+      pixPanelTitle: "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES",
+      pixPanelDescription: null,
+      pixPanelBanner: null,
+      pixPanelThumbnail: null,
+      pixPanelColor: null,
       mediatorQueueMessageId: null,
       pixPanelChannelId: null,
       pixPanelMessageId: null,
@@ -582,16 +592,44 @@ function configEmbed() {
     "",
     "**Aparência**",
     `Cor: \`${c.embedColor}\` • Foto padrão: ${configured(c.profileImage)} • Painel: ${c.ticketPanelTitle || "Central de Tickets"}`,
+    `Visuais: fila de Mediadores ${configured(c.mediatorQueueColor)} • painel de PIX ${configured(c.pixPanelColor)}`,
     "",
     "Selecione uma categoria no menu para editar."
   ].join("\n"));
 }
 
-function makeEmbed(title, description = "") {
+function resolveCachedCustomEmojiShortcodes(text, guild = null) {
+  let source = String(text ?? "");
+  const explicitTags = [];
+  source = source.replace(/<a?:[a-zA-Z0-9_]{2,32}:\d{15,22}>/g, tag => {
+    const marker = `\u0000CUSTOM_EMOJI_${explicitTags.length}\u0000`;
+    explicitTags.push(tag);
+    return marker;
+  });
+  const tokenPattern = /:([a-zA-Z0-9_]{2,32}|\d{15,22}):/g;
+  const emojiGuilds = new Map();
+  if (guild?.id) emojiGuilds.set(guild.id, guild);
+  for (const knownGuild of client?.guilds?.cache?.values?.() || []) emojiGuilds.set(knownGuild.id, knownGuild);
+  const resolveToken = token => {
+    for (const knownGuild of emojiGuilds.values()) {
+      const cache = knownGuild.emojis?.cache;
+      const emoji = /^\d+$/.test(token)
+        ? cache?.get(token)
+        : cache?.find(item => item.name?.toLowerCase() === token.toLowerCase());
+      if (emoji) return emoji.toString();
+    }
+    return null;
+  };
+  return source
+    .replace(tokenPattern, (match, token) => resolveToken(token) || match)
+    .replace(/\u0000CUSTOM_EMOJI_(\d+)\u0000/g, (_, index) => explicitTags[Number(index)]);
+}
+
+function makeEmbed(title, description = "", color = null) {
   const result = new EmbedBuilder()
-    .setColor(db.config.embedColor || "#5865F2")
-    .setTitle(title)
-    .setDescription(String(description).trim());
+    .setColor(color || db.config.embedColor || "#5865F2")
+    .setTitle(resolveCachedCustomEmojiShortcodes(title))
+    .setDescription(resolveCachedCustomEmojiShortcodes(String(description).trim()));
 
   if (db.config.profileImage && validUrl(db.config.profileImage)) {
     result.setThumbnail(db.config.profileImage);
@@ -975,8 +1013,8 @@ function queueDescription(queue) {
 function queueEmbed(queue) {
   return new EmbedBuilder()
     .setColor(db.config.embedColor || "#5865F2")
-    .setTitle(queueTitle(queue))
-    .setDescription(queueDescription(queue));
+    .setTitle(resolveCachedCustomEmojiShortcodes(queueTitle(queue)))
+    .setDescription(resolveCachedCustomEmojiShortcodes(queueDescription(queue)));
 }
 
 function queueLeaveButton(customId) {
@@ -1114,11 +1152,18 @@ function queueOneVsOneModeComponents(format, modality, value, channelId) {
   ];
 }
 async function mediatorQueueEmbed(guild) {
+  const configuredTitle = await resolveCustomEmojiShortcodes(
+    db.config.mediatorQueueTitle || "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES",
+    guild
+  );
+  const configuredDescription = db.config.mediatorQueueDescription
+    ? await resolveCustomEmojiShortcodes(db.config.mediatorQueueDescription, guild)
+    : "";
   const eligibleMediators = [...new Set(db.mediatorQueue || [])];
   const nextMediator = eligibleMediators.length
     ? eligibleMediators[(Number(db.mediatorRotation) || 0) % eligibleMediators.length]
     : null;
-  const lines = [];
+  const lines = configuredDescription ? [configuredDescription, ""] : [];
 
   if (nextMediator) {
     lines.push(`**Próximo mediador:** <@${nextMediator}>`, "");
@@ -1136,10 +1181,13 @@ async function mediatorQueueEmbed(guild) {
     }
   }
 
-  return new EmbedBuilder()
-    .setColor(db.config.embedColor || "#5865F2")
-    .setTitle(`<:escudoroxoraze:${QUEUE_ACTION_EMOJIS.mediatorShield}> FILA MEDIADORES`)
+  const embed = new EmbedBuilder()
+    .setColor(db.config.mediatorQueueColor || db.config.embedColor || "#5865F2")
+    .setTitle(configuredTitle)
     .setDescription(lines.join("\n"));
+  if (db.config.mediatorQueueBanner && validUrl(db.config.mediatorQueueBanner)) embed.setImage(db.config.mediatorQueueBanner);
+  if (db.config.mediatorQueueThumbnail && validUrl(db.config.mediatorQueueThumbnail)) embed.setThumbnail(db.config.mediatorQueueThumbnail);
+  return embed;
 }
 
 function mediatorQueueComponents() {
@@ -1711,12 +1759,16 @@ function ticketCreationPanelComponents() {
   ];
 }
 
-function ticketCreationPanelEmbed() {
+async function ticketCreationPanelEmbed(guild) {
   const c = db.config;
+  const title = await resolveCustomEmojiShortcodes(c.ticketPanelTitle || "CENTRAL DE TICKETS", guild);
+  const configuredDescription = c.ticketPanelDescription
+    ? await resolveCustomEmojiShortcodes(c.ticketPanelDescription, guild)
+    : null;
   const embed = new EmbedBuilder()
-    .setColor(c.embedColor || c.ticketPanelColor || "#5865F2")
-    .setTitle(c.ticketPanelTitle || "CENTRAL DE TICKETS")
-    .setDescription((c.ticketPanelDescription || [
+    .setColor(c.ticketPanelColor || c.embedColor || "#5865F2")
+    .setTitle(title)
+    .setDescription((configuredDescription || [
       "**Central oficial de atendimento.**",
       "",
       "Selecione no menu abaixo o tipo de atendimento que você precisa.",
@@ -2392,6 +2444,8 @@ function configButtons() {
           { label: "Canal das Apostas", value: "config_bet_channel", emoji: "🎮", description: "Escolha o canal onde as apostas privadas serão criadas como filas." },
           { label: "Categoria Streamer", value: "config_streamer_category", emoji: "🎥", description: "Escolha onde as filas de Streamer serão criadas." },
           { label: "Fila de Mediadores", value: "config_mediator_queue", emoji: "👨‍⚖️", description: "Publique ou atualize a fila de Mediadores." },
+          { label: "Visual da fila de Mediadores", value: "config_mediator_visual", emoji: "🛡️", description: "Edite título, descrição, imagens e cor da fila." },
+          { label: "Visual do painel de PIX", value: "config_pix_visual", emoji: "👥", description: "Edite título, descrição, imagens e cor do painel." },
           { label: "Cargos dos Tickets", value: "config_support_roles", emoji: "🎫", description: "Configure Suporte, Supervisor, Auxiliar, Diretor e Sub Don." },
           { label: "Canais dos Tickets", value: "config_ticket_channels", emoji: "📢", description: "Defina o canal de cada tipo de ticket." },
           { label: "Canais de Logs", value: "config_log_channels", emoji: "📋", description: "Escolha destinos de logs de filas, tickets, apostas e erros." },
@@ -2401,6 +2455,52 @@ function configButtons() {
         ])
     )
   ];
+}
+
+function panelVisualModal(kind) {
+  const definitions = {
+    mediator: {
+      prefix: "mediatorQueue",
+      customId: "mediator_visual_modal",
+      title: "Visual da fila de Mediadores",
+      titlePlaceholder: "🛡️ FILA MEDIADORES",
+      descriptionPlaceholder: "Texto opcional. Emojis: :nome:, <:nome:ID> ou <a:nome:ID>."
+    },
+    pix: {
+      prefix: "pixPanel",
+      customId: "pix_visual_modal",
+      title: "Visual do painel de cadastro PIX",
+      titlePlaceholder: "👥 ÁREA DE CADASTRO DE MEDIADORES",
+      descriptionPlaceholder: "Texto opcional. Emojis: :nome:, <:nome:ID> ou <a:nome:ID>."
+    }
+  };
+  const definition = definitions[kind];
+  const config = db.config;
+  const prefix = definition.prefix;
+  const modal = new ModalBuilder().setCustomId(definition.customId).setTitle(definition.title);
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder()
+      .setCustomId(`${kind}_visual_title`).setLabel("Título")
+      .setPlaceholder(definition.titlePlaceholder).setStyle(TextInputStyle.Short)
+      .setRequired(false).setMaxLength(256).setValue(config[`${prefix}Title`] || "")),
+    new ActionRowBuilder().addComponents(new TextInputBuilder()
+      .setCustomId(`${kind}_visual_description`).setLabel("Descrição")
+      .setPlaceholder(definition.descriptionPlaceholder).setStyle(TextInputStyle.Paragraph)
+      .setRequired(false).setMaxLength(2500).setValue(config[`${prefix}Description`] || "")),
+    new ActionRowBuilder().addComponents(new TextInputBuilder()
+      .setCustomId(`${kind}_visual_banner`).setLabel("Banner — URL da imagem")
+      .setPlaceholder("https://...").setStyle(TextInputStyle.Short)
+      .setRequired(false).setMaxLength(500).setValue(config[`${prefix}Banner`] || "")),
+    new ActionRowBuilder().addComponents(new TextInputBuilder()
+      .setCustomId(`${kind}_visual_thumbnail`).setLabel("Thumbnail — URL da imagem")
+      .setPlaceholder("https://...").setStyle(TextInputStyle.Short)
+      .setRequired(false).setMaxLength(500).setValue(config[`${prefix}Thumbnail`] || "")),
+    new ActionRowBuilder().addComponents(new TextInputBuilder()
+      .setCustomId(`${kind}_visual_color`).setLabel("Cor HEX")
+      .setPlaceholder("#5865F2").setStyle(TextInputStyle.Short)
+      .setRequired(false).setMaxLength(7).setValue(config[`${prefix}Color`] || config.embedColor || "#5865F2"))
+  );
+  return modal;
 }
 
 /* ========================================================
@@ -3040,9 +3140,10 @@ client.on("messageCreate", async message => {
 
 function pixPanelPayload() {
   const entries = Object.entries(db.pix || {});
-  const lines = [
-    "**Chaves PIX cadastradas:**"
-  ];
+  const configuredDescription = db.config.pixPanelDescription
+    ? resolveCachedCustomEmojiShortcodes(db.config.pixPanelDescription)
+    : null;
+  const lines = [configuredDescription, configuredDescription ? "" : null, "**Chaves PIX cadastradas:**"].filter(line => line !== null);
 
   if (!entries.length) {
     lines.push("Nenhuma chave PIX cadastrada.");
@@ -3053,11 +3154,19 @@ function pixPanelPayload() {
     }
   }
 
+  const embed = makeEmbed(
+    db.config.pixPanelTitle || "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES",
+    lines.join("\n"),
+    db.config.pixPanelColor
+  );
+  if (db.config.pixPanelBanner && validUrl(db.config.pixPanelBanner)) embed.setImage(db.config.pixPanelBanner);
+  if (db.config.pixPanelThumbnail && validUrl(db.config.pixPanelThumbnail)) embed.setThumbnail(db.config.pixPanelThumbnail);
+
   return {
-    embeds: [makeEmbed("<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES", lines.join("\n"))],
+    embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(
-        addCustomEmoji(new ButtonBuilder().setCustomId("pix_configure").setLabel("⚙️ Configurar Pix").setStyle(ButtonStyle.Primary), "tk_config", "1572992382906142892"),
+        addCustomEmoji(new ButtonBuilder().setCustomId("pix_configure").setLabel("Configurar Pix").setStyle(ButtonStyle.Primary), "tk_config", "1572992382906142892"),
         addCustomEmoji(new ButtonBuilder().setCustomId("pix_edit").setLabel("Editar Pix").setStyle(ButtonStyle.Primary), "edita", "1511844799831871539"),
         addCustomEmoji(new ButtonBuilder().setCustomId("pix_remove").setLabel("Remover Pix").setStyle(ButtonStyle.Primary), "lixeira", "1476756733677539381")
       )
@@ -3076,8 +3185,8 @@ async function refreshPixPanel(guild) {
   const message = await channel.messages.fetch(messageId).catch(() => null);
   if (!message) return false;
 
-  await message.edit(pixPanelPayload()).catch(() => null);
-  return true;
+      const edited = await message.edit(pixPanelPayload()).catch(() => null);
+      return Boolean(edited);
 }
 
 /* ========================================================
@@ -3413,7 +3522,7 @@ client.on("interactionCreate", async interaction => {
             new TextInputBuilder()
               .setCustomId("embed_description")
               .setLabel("Descrição")
-              .setPlaceholder("Texto, :nome_do_emoji: ou <:nome:ID>")
+              .setPlaceholder("Texto, :nome:, <:nome:ID> ou <a:nome:ID>")
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
               .setMaxLength(4000)
@@ -3456,7 +3565,7 @@ client.on("interactionCreate", async interaction => {
         interaction.options.getSubcommand() === "ticket"
       ) {
         return interaction.reply({
-          embeds: [ticketCreationPanelEmbed()],
+          embeds: [await ticketCreationPanelEmbed(interaction.guild)],
           components: ticketCreationPanelComponents()
         });
       }
@@ -3627,7 +3736,7 @@ client.on("interactionCreate", async interaction => {
           embeds: [makeEmbed("💳 CADASTRO PIX", "🗑️ **Cadastro Pix removido com sucesso.**")],
           components: [
             new ActionRowBuilder().addComponents(
-              new ButtonBuilder().setCustomId("pix_configure").setLabel("Configurar Pix").setEmoji("⚙️").setStyle(ButtonStyle.Success),
+              addCustomEmoji(new ButtonBuilder().setCustomId("pix_configure").setLabel("Configurar Pix").setStyle(ButtonStyle.Primary), "tk_config", "1572992382906142892"),
               new ButtonBuilder().setCustomId("pix_edit").setLabel("Editar Pix").setEmoji("✏️").setStyle(ButtonStyle.Primary).setDisabled(true),
               new ButtonBuilder().setCustomId("pix_remove").setLabel("Remover Cadastro").setEmoji("🗑️").setStyle(ButtonStyle.Danger).setDisabled(true)
             )
@@ -5162,12 +5271,59 @@ client.on("interactionCreate", async interaction => {
         }
       }
 
+      if (interaction.customId === "mediator_visual_modal" || interaction.customId === "pix_visual_modal") {
+        if (!(await requireAdmin(interaction))) return;
+        const kind = interaction.customId === "mediator_visual_modal" ? "mediator" : "pix";
+        const prefix = kind === "mediator" ? "mediatorQueue" : "pixPanel";
+        const title = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue(`${kind}_visual_title`).trim(), interaction.guild);
+        const description = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue(`${kind}_visual_description`).trim(), interaction.guild);
+        const banner = interaction.fields.getTextInputValue(`${kind}_visual_banner`).trim();
+        const thumbnail = interaction.fields.getTextInputValue(`${kind}_visual_thumbnail`).trim();
+        const color = interaction.fields.getTextInputValue(`${kind}_visual_color`).trim() || db.config.embedColor || "#5865F2";
+
+        if (!validHex(color)) return deny(interaction, "❌ A cor deve estar no formato `#5865F2`.");
+        if (banner && !validUrl(banner)) return deny(interaction, "❌ A URL do banner é inválida.");
+        if (thumbnail && !validUrl(thumbnail)) return deny(interaction, "❌ A URL da thumbnail é inválida.");
+
+        db.config[`${prefix}Title`] = title || (kind === "mediator"
+          ? "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES"
+          : "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES");
+        db.config[`${prefix}Description`] = description || null;
+        db.config[`${prefix}Banner`] = banner || null;
+        db.config[`${prefix}Thumbnail`] = thumbnail || null;
+        db.config[`${prefix}Color`] = color;
+        saveDatabase();
+
+        if (kind === "mediator") {
+          const refreshed = db.config.mediatorQueueChannelId
+            ? await updateMediatorQueueMessage(interaction.guild)
+            : { ok: false };
+          return interaction.reply({
+            content: refreshed.ok
+              ? "Visual da fila de Mediadores salvo e aplicado à publicação."
+              : "Visual salvo. Quando houver um canal configurado, a publicação usará estas definições.",
+            embeds: [await mediatorQueueEmbed(interaction.guild)],
+            flags: MessageFlags.Ephemeral
+          });
+        }
+
+        const refreshed = await refreshPixPanel(interaction.guild);
+        const pixPreview = pixPanelPayload();
+        return interaction.reply({
+          content: refreshed
+            ? "Visual do painel de PIX salvo e aplicado à publicação."
+            : "Visual salvo. O painel publicado será atualizado quando estiver disponível.",
+          embeds: pixPreview.embeds,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
       /* PAINEL DE TICKETS */
       if (interaction.customId === "ticket_panel_modal") {
         if (!(await requireAdmin(interaction))) return;
 
-        const title = interaction.fields.getTextInputValue("ticket_title").trim();
-        const description = interaction.fields.getTextInputValue("ticket_description").trim();
+        const title = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("ticket_title").trim(), interaction.guild);
+        const description = await resolveCustomEmojiShortcodes(interaction.fields.getTextInputValue("ticket_description").trim(), interaction.guild);
         const banner = interaction.fields.getTextInputValue("ticket_banner").trim();
         const thumbnail = interaction.fields.getTextInputValue("ticket_thumbnail").trim();
         const color = interaction.fields.getTextInputValue("ticket_color").trim() || db.config.embedColor || "#5865F2";
@@ -5185,7 +5341,7 @@ client.on("interactionCreate", async interaction => {
 
         return interaction.reply({
           content: "✅ Painel de Tickets atualizado. O próximo `/criar ticket` usará essas configurações.",
-          embeds: [ticketCreationPanelEmbed()],
+          embeds: [await ticketCreationPanelEmbed(interaction.guild)],
           components: ticketCreationPanelComponents(),
           flags: MessageFlags.Ephemeral
         });
@@ -5484,6 +5640,12 @@ client.on("interactionCreate", async interaction => {
             return deny(interaction, `❌ Não foi possível publicar a Fila de Mediadores.\n\n${result.error}`);
           }
           return interaction.update({ content: "✅ **Fila de Mediadores publicada/atualizada com sucesso.**", components: configButtons(), embeds: [] });
+        }
+        if (selected === "config_mediator_visual") {
+          return safeShowModal(interaction, panelVisualModal("mediator"));
+        }
+        if (selected === "config_pix_visual") {
+          return safeShowModal(interaction, panelVisualModal("pix"));
         }
         if (selected === "config_ticket_channels") {
           return interaction.update({ embeds: [makeEmbed("CANAIS DOS TICKETS", "Escolha um canal para cada tipo de atendimento. Os seletores ficam abaixo desta embed; depois de escolher, você continuará nesta tela.")], content: "", components: configTicketChannelsComponents() });
