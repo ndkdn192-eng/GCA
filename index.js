@@ -598,6 +598,18 @@ function configEmbed() {
   ].join("\n"));
 }
 
+const KNOWN_CUSTOM_EMOJI_MARKUP = {
+  member: "<:member:1571630702825578626>",
+  tk_config: "<:tk_config:1572992382906142892>",
+  edita: "<:edita:1511844799831871539>",
+  lixeira: "<:lixeira:1476756733677539381>",
+  chack: "<a:Chack:1530037880993353948>",
+  real: "<:Real:1530038051664035983>",
+  escudoroxoraze: "<:escudoroxoraze:1527196129844924537>",
+  members: "<:MEMBERS:1565530864396271758>",
+  blackgelo: "<:blackgelo:1555678519516991488>"
+};
+
 function resolveCachedCustomEmojiShortcodes(text, guild = null) {
   let source = String(text ?? "");
   const explicitTags = [];
@@ -611,6 +623,10 @@ function resolveCachedCustomEmojiShortcodes(text, guild = null) {
   if (guild?.id) emojiGuilds.set(guild.id, guild);
   for (const knownGuild of client?.guilds?.cache?.values?.() || []) emojiGuilds.set(knownGuild.id, knownGuild);
   const resolveToken = token => {
+    if (!/^\d+$/.test(token)) {
+      const known = KNOWN_CUSTOM_EMOJI_MARKUP[token.toLowerCase()];
+      if (known) return known;
+    }
     for (const knownGuild of emojiGuilds.values()) {
       const cache = knownGuild.emojis?.cache;
       const emoji = /^\d+$/.test(token)
@@ -659,6 +675,10 @@ async function resolveCustomEmojiShortcodes(text, guild) {
     return guilds.values();
   };
   const findEmoji = token => {
+    if (!/^\d+$/.test(token)) {
+      const known = KNOWN_CUSTOM_EMOJI_MARKUP[token.toLowerCase()];
+      if (known) return { toString: () => known };
+    }
     for (const knownGuild of guildsToSearch()) {
       const emojis = knownGuild.emojis?.cache;
       const found = /^\d+$/.test(token)
@@ -1034,8 +1054,8 @@ function queueJoinButton(customId, label = "Entrar na fila") {
   );
 }
 
-function asComponentsV2Card(payload) {
-  // Keep standard Discord embeds and action rows; do not convert them into square V2 cards.
+function standardDiscordPayload(payload) {
+  // Pass through standard embeds and action rows without altering their display format.
   return payload;
 }
 
@@ -2107,7 +2127,7 @@ async function createTicketChannel(interaction, ticketType = "support") {
   db.tickets[ticketId] = ticket;
   saveDatabase();
 
-  const welcomeMessage = await thread.send(asComponentsV2Card({
+  const welcomeMessage = await thread.send(standardDiscordPayload({
     content: [
       `<@${interaction.user.id}>`,
       responsibleRoleMentions.join(" ")
@@ -2931,7 +2951,7 @@ client.on("messageCreate", async message => {
           `**Responsável:** ${adminMention}`
         ].join("\n"));
 
-        await message.channel.send(asComponentsV2Card({
+        await message.channel.send(standardDiscordPayload({
           embeds: [roomEmbed],
           components: [
             new ActionRowBuilder().addComponents(
@@ -3009,7 +3029,7 @@ client.on("messageCreate", async message => {
         }
       }
 
-      await message.channel.send(asComponentsV2Card({
+      await message.channel.send(standardDiscordPayload({
         embeds: [makeEmbed("🛠️ PAINEL DO RESPONSÁVEL", [
           `**Ticket:** <#${ticket.channelId}>`,
           `👤 **Responsável:** <@${message.author.id}>`,
@@ -3051,7 +3071,7 @@ client.on("messageCreate", async message => {
         return message.reply("🔒 O painel do Mediador será liberado somente após os 2 jogadores confirmarem.");
       }
 
-      return message.reply(asComponentsV2Card({
+      return message.reply(standardDiscordPayload({
         embeds: [
           makeEmbed(
             "PAINEL DO MEDIADOR",
@@ -3192,12 +3212,12 @@ async function grantChannelAccess(channel, userId, permissions = {}) {
 client.on("interactionCreate", async interaction => {
   for (const method of ["reply", "update", "editReply", "followUp"]) {
     const original = interaction[method];
-    if (typeof original !== "function" || original.__componentsV2Wrapped) continue;
+    if (typeof original !== "function" || original.__standardEmbedWrapped) continue;
     const wrapped = function (options, ...args) {
-      const converted = options && typeof options === "object" ? asComponentsV2Card(options) : options;
-      return original.call(interaction, converted, ...args);
+      const standardOptions = options && typeof options === "object" ? standardDiscordPayload(options) : options;
+      return original.call(interaction, standardOptions, ...args);
     };
-    wrapped.__componentsV2Wrapped = true;
+    wrapped.__standardEmbedWrapped = true;
     interaction[method] = wrapped;
   }
   try {
@@ -4722,8 +4742,8 @@ client.on("interactionCreate", async interaction => {
 
           await claimTicket(ticket, ticketChannel, interaction.user.id, displayName);
 
-          // Mantém o cartão do ticket e o menu visíveis após a atribuição.
-          return interaction.message.edit(asComponentsV2Card({
+          // Mantém a embed normal do ticket e o menu visíveis após a atribuição.
+          return interaction.message.edit(standardDiscordPayload({
             embeds: [ticketPanelEmbed(ticket, ticketGuild)],
             components: ticketPanelComponents(ticket.id, ticket.claimedBy)
           })).catch(() => {});
@@ -5638,7 +5658,7 @@ client.on("interactionCreate", async interaction => {
         bet.coinAwardedAt = Date.now();
         if (bet.resultType === "wo") userStats(winnerId).woWins += 1;
         saveDatabase();
-        return interaction.editReply(asComponentsV2Card({
+        return interaction.editReply(standardDiscordPayload({
           embeds: [makeEmbed(bet.resultType === "wo" ? "VITÓRIA POR W.O." : "RESULTADO DA PARTIDA", [
             `**Vencedor:** <@${winnerId}>`,
             `**Perdedor:** <@${loserId}>`,
