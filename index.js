@@ -160,7 +160,6 @@ function createDefaultDatabase() {
       ticketPanelBanner: null,
       ticketPanelThumbnail: null,
       ticketPanelColor: null,
-      ticketPanelFooter: "🎮 Sistema de Apostas",
       mediatorQueueMessageId: null,
       pixPanelChannelId: null,
       pixPanelMessageId: null,
@@ -592,8 +591,7 @@ function makeEmbed(title, description = "") {
   const result = new EmbedBuilder()
     .setColor(db.config.embedColor || "#5865F2")
     .setTitle(title)
-    .setDescription(String(description).trim())
-    .setFooter({ text: "🎮 Sistema de Apostas" });
+    .setDescription(String(description).trim());
 
   if (db.config.profileImage && validUrl(db.config.profileImage)) {
     result.setThumbnail(db.config.profileImage);
@@ -852,9 +850,16 @@ const QUEUE_EMOJI_IDS = {
   sair: "1560389119706927237"
 };
 
-function addCustomEmoji(button, emojiName, emojiId) {
+const QUEUE_ACTION_EMOJIS = {
+  check: { name: "Chack", id: "1530037880993353948", animated: true },
+  cross: { name: "Real", id: "1530038051664035983" },
+  mediatorShield: "1527196129844924537",
+  members: "1565530864396271758"
+};
+
+function addCustomEmoji(button, emojiName, emojiId, animated = false) {
   const id = String(emojiId || "").trim();
-  if (/^\d{15,22}$/.test(id)) button.setEmoji({ name: emojiName, id });
+  if (/^\d{15,22}$/.test(id)) button.setEmoji({ name: emojiName, id, ...(animated ? { animated: true } : {}) });
   return button;
 }
 
@@ -971,15 +976,24 @@ function queueEmbed(queue) {
   return new EmbedBuilder()
     .setColor(db.config.embedColor || "#5865F2")
     .setTitle(queueTitle(queue))
-    .setDescription(queueDescription(queue))
-    .setFooter({ text: "Sistema de Apostas" });
+    .setDescription(queueDescription(queue));
 }
 
 function queueLeaveButton(customId) {
-  return new ButtonBuilder()
-    .setCustomId(customId)
-    .setLabel("✕ Sair da fila")
-    .setStyle(ButtonStyle.Danger);
+  return addCustomEmoji(
+    new ButtonBuilder().setCustomId(customId).setLabel("Sair da fila").setStyle(ButtonStyle.Danger),
+    QUEUE_ACTION_EMOJIS.cross.name,
+    QUEUE_ACTION_EMOJIS.cross.id
+  );
+}
+
+function queueJoinButton(customId, label = "Entrar na fila") {
+  return addCustomEmoji(
+    new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(ButtonStyle.Success),
+    QUEUE_ACTION_EMOJIS.check.name,
+    QUEUE_ACTION_EMOJIS.check.id,
+    QUEUE_ACTION_EMOJIS.check.animated
+  );
 }
 
 function asComponentsV2Card(payload, force = false) {
@@ -1045,7 +1059,7 @@ function queueComponents(queue) {
   if (["2x2", "3x3"].includes(queue.format) && queue.modality !== "misto") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
+        queueJoinButton(`queue_join|${queue.id}|normal`),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1063,7 +1077,7 @@ function queueComponents(queue) {
   if (queue.modality === "misto" && queue.format === "2x2") {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("✓ Entrar na fila · 1Emu").setStyle(ButtonStyle.Success),
+        queueJoinButton(`queue_join|${queue.id}|1emu`, "Entrar na fila · 1Emu"),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1072,8 +1086,8 @@ function queueComponents(queue) {
   if (queue.modality === "misto" && ["3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|1emu`).setLabel("✓ Entrar na fila · 1Emu").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|2emu`).setLabel("✓ Entrar na fila · 2Emu").setStyle(ButtonStyle.Success),
+        queueJoinButton(`queue_join|${queue.id}|1emu`, "Entrar na fila · 1Emu"),
+        queueJoinButton(`queue_join|${queue.id}|2emu`, "Entrar na fila · 2Emu"),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1082,7 +1096,7 @@ function queueComponents(queue) {
   if (["2x2", "3x3", "4x4"].includes(queue.format)) {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`queue_join|${queue.id}|normal`).setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
+        queueJoinButton(`queue_join|${queue.id}|normal`),
         queueLeaveButton(`queue_leave|${queue.id}`)
       )
     ];
@@ -1100,29 +1114,32 @@ function queueOneVsOneModeComponents(format, modality, value, channelId) {
   ];
 }
 async function mediatorQueueEmbed(guild) {
-  const lines = ["**FILA MEDIADORES**", ""];
+  const eligibleMediators = [...new Set(db.mediatorQueue || [])];
+  const nextMediator = eligibleMediators.length
+    ? eligibleMediators[(Number(db.mediatorRotation) || 0) % eligibleMediators.length]
+    : null;
+  const lines = [];
 
-  if (!db.mediatorQueue?.length) {
-    lines.push("👤 **Nenhum Mediador na fila.**");
+  if (nextMediator) {
+    lines.push(`**Próximo mediador:** <@${nextMediator}>`, "");
+  }
+
+  if (!eligibleMediators.length) {
+    lines.push(`<:MEMBERS:${QUEUE_ACTION_EMOJIS.members}> **Nenhum Mediador na fila.**`);
   } else {
-    lines.push("👨‍⚖️ **Mediadores aguardando:**");
-    const mediatorMembers = await Promise.all(
-      db.mediatorQueue.map(userId =>
-        guild.members.fetch(userId).catch(() => null)
-      )
-    );
-    for (let i = 0; i < db.mediatorQueue.length; i++) {
-      const userId = db.mediatorQueue[i];
-      const member = mediatorMembers[i];
-      const displayName = member?.displayName || member?.user?.username || "Mediador";
-      lines.push(`**${i + 1}.** <@${userId}> — **${displayName}**`);
+    lines.push(`<:MEMBERS:${QUEUE_ACTION_EMOJIS.members}> **Mediadores na fila:**`);
+    for (let i = 0; i < eligibleMediators.length; i++) {
+      const userId = eligibleMediators[i];
+      const member = guild.members.cache.get(userId);
+      const displayName = member?.displayName || member?.user?.username;
+      lines.push(`**${i + 1}.** <@${userId}>${displayName ? ` — **${displayName}**` : ""}`);
     }
   }
 
   return new EmbedBuilder()
     .setColor(db.config.embedColor || "#5865F2")
-    .setDescription(lines.join("\n"))
-    .setFooter({ text: "🎮 Sistema de Apostas" });
+    .setTitle(`<:escudoroxoraze:${QUEUE_ACTION_EMOJIS.mediatorShield}> FILA MEDIADORES`)
+    .setDescription(lines.join("\n"));
 }
 
 function mediatorQueueComponents() {
@@ -1132,7 +1149,7 @@ function mediatorQueueComponents() {
 function safeMediatorQueueComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("mediator_join").setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
+      queueJoinButton("mediator_join"),
       queueLeaveButton("mediator_leave")
     )
   ];
@@ -1325,14 +1342,17 @@ async function createPrivateBetChannel(guild, bet) {
 }
 
 function getNextMediator() {
-  if (!db.mediatorQueue.length) return null;
+  if (!Array.isArray(db.mediatorQueue) || !db.mediatorQueue.length) return null;
 
   // Remove duplicados.
   db.mediatorQueue = [...new Set(db.mediatorQueue)];
 
   if (!db.mediatorQueue.length) return null;
 
-  const index = db.mediatorRotation % db.mediatorQueue.length;
+  const currentRotation = Number.isInteger(Number(db.mediatorRotation))
+    ? Number(db.mediatorRotation)
+    : 0;
+  const index = ((currentRotation % db.mediatorQueue.length) + db.mediatorQueue.length) % db.mediatorQueue.length;
   const mediatorId = db.mediatorQueue[index];
 
   db.mediatorRotation =
@@ -1352,6 +1372,10 @@ async function distributeMediator(bet, guild) {
 
   // O acesso ao canal só é concedido depois das duas confirmações.
   saveDatabase();
+  // A seleção é round-robin; atualiza imediatamente no painel quem será o próximo.
+  void updateMediatorQueueMessage(guild).then(result => {
+    if (!result?.ok) console.warn("Não foi possível atualizar o próximo Mediador na fila:", result?.error);
+  }).catch(error => console.warn("Falha ao atualizar a fila de Mediadores:", error?.message || error));
   return true;
 }
 
@@ -1486,7 +1510,7 @@ function streamerQueueComponents(queue) {
 
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`streamer_join|${queue.id}`).setLabel("✓ Entrar na fila").setStyle(ButtonStyle.Success),
+      queueJoinButton(`streamer_join|${queue.id}`),
       queueLeaveButton(`streamer_leave|${queue.id}`),
       addCustomEmoji(new ButtonBuilder().setCustomId(`streamer_deactivate|${queue.id}`).setLabel("Desativar fila").setStyle(ButtonStyle.Secondary), "portafechada", QUEUE_EMOJI_IDS.sair)
     )
@@ -1704,8 +1728,7 @@ function ticketCreationPanelEmbed() {
       "**Divulgação** — Atendimento sobre divulgação.",
       "",
       "O atendimento é privado e somente você e a equipe responsável terão acesso."
-    ].join("\n")).trim())
-    .setFooter({ text: c.ticketPanelFooter || "Sistema de Apostas" });
+    ].join("\n")).trim());
 
   if (c.ticketPanelBanner && validUrl(c.ticketPanelBanner)) embed.setImage(c.ticketPanelBanner);
   if (c.ticketPanelThumbnail && validUrl(c.ticketPanelThumbnail)) embed.setThumbnail(c.ticketPanelThumbnail);
@@ -3018,16 +3041,11 @@ client.on("messageCreate", async message => {
 function pixPanelPayload() {
   const entries = Object.entries(db.pix || {});
   const lines = [
-    "**CADASTRO DE PIX**",
-    "",
-    "Cada usuário pode cadastrar seu próprio Pix.",
-    "O nome cadastrado aparece automaticamente neste painel.",
-    "",
-    "👥 **Nomes cadastrados:**"
+    "**Chaves PIX cadastradas:**"
   ];
 
   if (!entries.length) {
-    lines.push("❌ Nenhum Pix cadastrado.");
+    lines.push("Nenhuma chave PIX cadastrada.");
   } else {
     for (const [userId, pix] of entries) {
       const editedLabel = pix?.edited ? " — **Editado**" : "";
@@ -3036,12 +3054,12 @@ function pixPanelPayload() {
   }
 
   return {
-    embeds: [makeEmbed("💳 PAINEL DE CADASTRO PIX", lines.join("\n"))],
+    embeds: [makeEmbed("<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES", lines.join("\n"))],
     components: [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("pix_configure").setLabel("Configurar Pix").setEmoji("⚙️").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("pix_edit").setLabel("Editar Pix").setEmoji("✏️").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("pix_remove").setLabel("Remover Pix").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+        addCustomEmoji(new ButtonBuilder().setCustomId("pix_configure").setLabel("⚙️ Configurar Pix").setStyle(ButtonStyle.Primary), "tk_config", "1572992382906142892"),
+        addCustomEmoji(new ButtonBuilder().setCustomId("pix_edit").setLabel("Editar Pix").setStyle(ButtonStyle.Primary), "edita", "1511844799831871539"),
+        addCustomEmoji(new ButtonBuilder().setCustomId("pix_remove").setLabel("Remover Pix").setStyle(ButtonStyle.Primary), "lixeira", "1476756733677539381")
       )
     ]
   };
