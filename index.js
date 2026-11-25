@@ -160,12 +160,12 @@ function createDefaultDatabase() {
       ticketPanelBanner: null,
       ticketPanelThumbnail: null,
       ticketPanelColor: null,
-      mediatorQueueTitle: "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES",
+      mediatorQueueTitle: "FILA MEDIADORES",
       mediatorQueueDescription: null,
       mediatorQueueBanner: null,
       mediatorQueueThumbnail: null,
       mediatorQueueColor: null,
-      pixPanelTitle: "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES",
+      pixPanelTitle: "ÁREA DE CADASTRO DE MEDIADORES",
       pixPanelDescription: null,
       pixPanelBanner: null,
       pixPanelThumbnail: null,
@@ -282,6 +282,15 @@ function mergeDefaults(base, data) {
 }
 
 let db = loadDatabase();
+
+// Remove os emojis que eram padrões antigos desses dois painéis. As pessoas
+// continuam podendo escolher qualquer emoji existente ao editar o título/texto.
+if (db.config.mediatorQueueTitle === "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES") {
+  db.config.mediatorQueueTitle = "FILA MEDIADORES";
+}
+if (db.config.pixPanelTitle === "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES") {
+  db.config.pixPanelTitle = "ÁREA DE CADASTRO DE MEDIADORES";
+}
 
 // Configurações temporárias do comando /fila por usuário.
 const filaSetup = new Map();
@@ -598,18 +607,6 @@ function configEmbed() {
   ].join("\n"));
 }
 
-const KNOWN_CUSTOM_EMOJI_MARKUP = {
-  member: "<:member:1571630702825578626>",
-  tk_config: "<:tk_config:1572992382906142892>",
-  edita: "<:edita:1511844799831871539>",
-  lixeira: "<:lixeira:1476756733677539381>",
-  chack: "<a:Chack:1530037880993353948>",
-  real: "<:Real:1530038051664035983>",
-  escudoroxoraze: "<:escudoroxoraze:1527196129844924537>",
-  members: "<:MEMBERS:1565530864396271758>",
-  blackgelo: "<:blackgelo:1555678519516991488>"
-};
-
 function resolveCachedCustomEmojiShortcodes(text, guild = null) {
   let source = String(text ?? "");
   const explicitTags = [];
@@ -623,10 +620,6 @@ function resolveCachedCustomEmojiShortcodes(text, guild = null) {
   if (guild?.id) emojiGuilds.set(guild.id, guild);
   for (const knownGuild of client?.guilds?.cache?.values?.() || []) emojiGuilds.set(knownGuild.id, knownGuild);
   const resolveToken = token => {
-    if (!/^\d+$/.test(token)) {
-      const known = KNOWN_CUSTOM_EMOJI_MARKUP[token.toLowerCase()];
-      if (known) return known;
-    }
     for (const knownGuild of emojiGuilds.values()) {
       const cache = knownGuild.emojis?.cache;
       const emoji = /^\d+$/.test(token)
@@ -675,10 +668,6 @@ async function resolveCustomEmojiShortcodes(text, guild) {
     return guilds.values();
   };
   const findEmoji = token => {
-    if (!/^\d+$/.test(token)) {
-      const known = KNOWN_CUSTOM_EMOJI_MARKUP[token.toLowerCase()];
-      if (known) return { toString: () => known };
-    }
     for (const knownGuild of guildsToSearch()) {
       const emojis = knownGuild.emojis?.cache;
       const found = /^\d+$/.test(token)
@@ -910,9 +899,7 @@ const QUEUE_EMOJI_IDS = {
 
 const QUEUE_ACTION_EMOJIS = {
   check: { name: "Chack", id: "1530037880993353948", animated: true },
-  cross: { name: "Real", id: "1530038051664035983" },
-  mediatorShield: "1527196129844924537",
-  members: "1565530864396271758"
+  cross: { name: "Real", id: "1530038051664035983" }
 };
 
 function addCustomEmoji(button, emojiName, emojiId, animated = false) {
@@ -1123,7 +1110,7 @@ function queueOneVsOneModeComponents(format, modality, value, channelId) {
 }
 async function mediatorQueueEmbed(guild) {
   const configuredTitle = await resolveCustomEmojiShortcodes(
-    db.config.mediatorQueueTitle || "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES",
+    db.config.mediatorQueueTitle || "FILA MEDIADORES",
     guild
   );
   const configuredDescription = db.config.mediatorQueueDescription
@@ -1140,9 +1127,9 @@ async function mediatorQueueEmbed(guild) {
   }
 
   if (!eligibleMediators.length) {
-    lines.push(`<:MEMBERS:${QUEUE_ACTION_EMOJIS.members}> **Nenhum Mediador na fila.**`);
+    lines.push("**Nenhum Mediador na fila.**");
   } else {
-    lines.push(`<:MEMBERS:${QUEUE_ACTION_EMOJIS.members}> **Mediadores na fila:**`);
+    lines.push("**Mediadores na fila:**");
     for (let i = 0; i < eligibleMediators.length; i++) {
       const userId = eligibleMediators[i];
       const member = guild.members.cache.get(userId);
@@ -2433,14 +2420,14 @@ function panelVisualModal(kind) {
       prefix: "mediatorQueue",
       customId: "mediator_visual_modal",
       title: "Visual da fila de Mediadores",
-      titlePlaceholder: "🛡️ FILA MEDIADORES",
+      titlePlaceholder: "FILA MEDIADORES",
       descriptionPlaceholder: "Texto opcional. Emojis: :nome:, <:nome:ID> ou <a:nome:ID>."
     },
     pix: {
       prefix: "pixPanel",
       customId: "pix_visual_modal",
       title: "Visual do painel de cadastro PIX",
-      titlePlaceholder: "👥 ÁREA DE CADASTRO DE MEDIADORES",
+      titlePlaceholder: "ÁREA DE CADASTRO DE MEDIADORES",
       descriptionPlaceholder: "Texto opcional. Emojis: :nome:, <:nome:ID> ou <a:nome:ID>."
     }
   };
@@ -3125,7 +3112,7 @@ function pixPanelPayload() {
   }
 
   const embed = makeEmbed(
-    db.config.pixPanelTitle || "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES",
+    db.config.pixPanelTitle || "ÁREA DE CADASTRO DE MEDIADORES",
     lines.join("\n"),
     db.config.pixPanelColor
   );
@@ -5256,8 +5243,8 @@ client.on("interactionCreate", async interaction => {
         if (thumbnail && !validUrl(thumbnail)) return deny(interaction, "❌ A URL da thumbnail é inválida.");
 
         db.config[`${prefix}Title`] = title || (kind === "mediator"
-          ? "<:escudoroxoraze:1527196129844924537> FILA MEDIADORES"
-          : "<:member:1571630702825578626> ÁREA DE CADASTRO DE MEDIADORES");
+          ? "FILA MEDIADORES"
+          : "ÁREA DE CADASTRO DE MEDIADORES");
         db.config[`${prefix}Description`] = description || null;
         db.config[`${prefix}Banner`] = banner || null;
         db.config[`${prefix}Thumbnail`] = thumbnail || null;
